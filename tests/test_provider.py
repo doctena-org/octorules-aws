@@ -471,35 +471,6 @@ class TestIPSets:
         assert "allowlist" not in result
 
 
-class TestPageShield:
-    def test_list_returns_empty(self, mock_waf_client):
-        provider = AwsWafProvider(client=mock_waf_client)
-        assert provider.list_page_shield_policies(_zs()) == []
-
-    def test_get_all_returns_empty(self, mock_waf_client):
-        provider = AwsWafProvider(client=mock_waf_client)
-        assert provider.get_all_page_shield_policies(_zs()) == []
-
-    def test_create_raises(self, mock_waf_client):
-        provider = AwsWafProvider(client=mock_waf_client)
-        with pytest.raises(ProviderError, match="not supported"):
-            provider.create_page_shield_policy(
-                _zs(), description="", action="", expression="", enabled=True, value=""
-            )
-
-    def test_update_raises(self, mock_waf_client):
-        provider = AwsWafProvider(client=mock_waf_client)
-        with pytest.raises(ProviderError, match="not supported"):
-            provider.update_page_shield_policy(
-                _zs(), "p-1", description="", action="", expression="", enabled=True, value=""
-            )
-
-    def test_delete_raises(self, mock_waf_client):
-        provider = AwsWafProvider(client=mock_waf_client)
-        with pytest.raises(ProviderError, match="not supported"):
-            provider.delete_page_shield_policy(_zs(), "p-1")
-
-
 class TestExceptionWrapping:
     def test_access_denied_becomes_provider_auth_error(self, mock_waf_client):
         mock_waf_client.list_web_acls.side_effect = _make_client_error("AccessDeniedException")
@@ -735,14 +706,10 @@ class TestSupports:
     def test_supports_zone_discovery(self):
         assert "zone_discovery" in AwsWafProvider.SUPPORTS
 
-    def test_does_not_support_page_shield(self):
-        assert "page_shield" not in AwsWafProvider.SUPPORTS
-
     def test_provider_supports_helper(self):
         from octorules.provider.base import (
             SUPPORTS_CUSTOM_RULESETS,
             SUPPORTS_LISTS,
-            SUPPORTS_PAGE_SHIELD,
             SUPPORTS_ZONE_DISCOVERY,
             provider_supports,
         )
@@ -750,5 +717,4 @@ class TestSupports:
         prov = AwsWafProvider.__new__(AwsWafProvider)
         assert provider_supports(prov, SUPPORTS_CUSTOM_RULESETS)
         assert provider_supports(prov, SUPPORTS_LISTS)
-        assert not provider_supports(prov, SUPPORTS_PAGE_SHIELD)
         assert provider_supports(prov, SUPPORTS_ZONE_DISCOVERY)

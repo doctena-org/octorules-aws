@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 import os
 import threading
@@ -11,11 +10,8 @@ import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 from octorules.config import ConfigError
 from octorules.provider.base import PhaseRulesResult, Scope
-from octorules.provider.exceptions import (
-    ProviderAuthError,
-    ProviderConnectionError,
-    ProviderError,
-)
+from octorules.provider.exceptions import ProviderAuthError, ProviderError
+from octorules.provider.utils import make_error_wrapper
 
 log = logging.getLogger(__name__)
 
@@ -44,24 +40,21 @@ _AWS_PHASE_IDS = frozenset(
 )
 
 
-def _wrap_provider_errors(fn):
-    """Wrap boto3 exceptions as provider-agnostic base exceptions."""
+def _classify_client_error(e):
+    """Check boto3 ClientError code to determine if it's an auth error."""
+    if isinstance(e, ClientError):
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in _AUTH_ERROR_CODES:
+            return ProviderAuthError
+    return None
 
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in _AUTH_ERROR_CODES:
-                raise ProviderAuthError(str(e)) from e
-            raise ProviderError(str(e)) from e
-        except NoCredentialsError as e:
-            raise ProviderAuthError(str(e)) from e
-        except (EndpointConnectionError, ConnectionError) as e:
-            raise ProviderConnectionError(str(e)) from e
 
-    return wrapper
+_wrap_provider_errors = make_error_wrapper(
+    auth_errors=(NoCredentialsError,),
+    connection_errors=(EndpointConnectionError, ConnectionError),
+    generic_errors=(ClientError,),
+    classify=_classify_client_error,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +138,6 @@ class AwsWafProvider:
       - Phases → Rule types within a Web ACL (custom / rate / managed)
       - Custom rulesets → Rule Groups
       - Lists → IP Sets
-      - Page Shield → Not supported (methods return empty results)
 
     Authentication uses the standard boto3 credential chain (env vars,
     ~/.aws/credentials, IAM roles).  The ``token`` parameter is accepted
@@ -648,44 +640,3 @@ class AwsWafProvider:
             if ip_set.get("Id") == list_id:
                 return ip_set
         raise ConfigError(f"IP Set {list_id!r} not found")
-
-    # -- Page Shield (not supported by AWS WAF) --
-
-    @_wrap_provider_errors
-    def list_page_shield_policies(self, scope: Scope) -> list[dict]:
-        return []
-
-    @_wrap_provider_errors
-    def create_page_shield_policy(
-        self,
-        scope: Scope,
-        *,
-        description: str,
-        action: str,
-        expression: str,
-        enabled: bool,
-        value: str,
-    ) -> dict:
-        raise ProviderError("Page Shield policies are not supported by AWS WAF")
-
-    @_wrap_provider_errors
-    def update_page_shield_policy(
-        self,
-        scope: Scope,
-        policy_id: str,
-        *,
-        description: str,
-        action: str,
-        expression: str,
-        enabled: bool,
-        value: str,
-    ) -> dict:
-        raise ProviderError("Page Shield policies are not supported by AWS WAF")
-
-    @_wrap_provider_errors
-    def delete_page_shield_policy(self, scope: Scope, policy_id: str) -> None:
-        raise ProviderError("Page Shield policies are not supported by AWS WAF")
-
-    @_wrap_provider_errors
-    def get_all_page_shield_policies(self, scope: Scope) -> list[dict]:
-        return []
