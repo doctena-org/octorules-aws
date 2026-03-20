@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-20
+
 ### Added
 - **WA319** (ERROR): Invalid regex pattern in `RegexMatchStatement.RegexString`.
 - **WA321** (WARNING): Redundant double negation (`NotStatement` wrapping
@@ -13,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **WA600** (INFO): Disabled rules (`enabled: false`).
 - `enabled` is now a recognized top-level rule field (no longer triggers WA020).
 - Lint rule reference: `docs/lint.md`.
+
+## [0.2.0] - 2026-03-19
 
 ### Changed
 - Error wrapping uses `make_error_wrapper` from `octorules.provider.utils`
