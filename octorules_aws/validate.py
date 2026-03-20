@@ -54,6 +54,7 @@ _COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
 _VALID_RULE_FIELDS = frozenset(
     {
         "ref",
+        "enabled",
         "Priority",
         "Action",
         "OverrideAction",
@@ -174,6 +175,7 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
                 )
 
         _check_unknown_fields(rule, results, phase, ref_str)
+        _check_enabled(rule, results, phase, ref_str)
         _check_ref_format(ref_str, results, phase)
         _check_priority(rule, results, phase, ref_str, seen_priorities)
         _check_visibility(rule, results, phase, ref_str, seen_metrics)
@@ -202,6 +204,25 @@ def _check_unknown_fields(rule: dict, results: list[LintResult], phase: str, ref
                 phase=phase,
                 ref=ref,
                 field=field,
+            )
+        )
+
+
+# --- Best-practice checks (WA600) -------------------------------------------
+
+
+def _check_enabled(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
+    """WA600: Inform when a rule has enabled: false."""
+    if rule.get("enabled") is False:
+        results.append(
+            LintResult(
+                rule_id="WA600",
+                severity=Severity.INFO,
+                message="Rule is disabled (enabled: false)",
+                phase=phase,
+                ref=ref,
+                field="enabled",
+                suggestion="Remove if no longer needed",
             )
         )
 
@@ -743,6 +764,25 @@ def _check_statement_fields(
                         )
                     )
 
+        # WA319: Regex pattern validation
+        if stype == "RegexMatchStatement":
+            regex_str = inner.get("RegexString")
+            if isinstance(regex_str, str):
+                try:
+                    re.compile(regex_str)
+                except re.error as exc:
+                    results.append(
+                        LintResult(
+                            rule_id="WA319",
+                            severity=Severity.ERROR,
+                            message=f"Invalid regex pattern: {exc}",
+                            phase=phase,
+                            ref=ref,
+                            field="Statement.RegexMatchStatement.RegexString",
+                            suggestion="Fix the regex syntax",
+                        )
+                    )
+
         # WA315: Enum validation
         _check_statement_enums(stype, inner, results, phase, ref)
 
@@ -1101,7 +1141,7 @@ def _check_not(
     phase: str,
     ref: str,
 ) -> None:
-    """WA311 — NotStatement must have exactly 1 nested statement."""
+    """WA311/WA321 — NotStatement must have exactly 1 nested statement."""
     if not isinstance(inner, dict):
         return
     nested = inner.get("Statement")
@@ -1117,6 +1157,19 @@ def _check_not(
             )
         )
     elif isinstance(nested, dict):
+        # WA321: Redundant double negation
+        if "NotStatement" in nested:
+            results.append(
+                LintResult(
+                    rule_id="WA321",
+                    severity=Severity.WARNING,
+                    message="Redundant double negation — NotStatement wrapping NotStatement",
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.NotStatement",
+                    suggestion="Remove both NotStatement wrappers to simplify",
+                )
+            )
         _validate_statement(nested, results, phase, ref)
 
 

@@ -116,6 +116,53 @@ class TestAwsLint:
         rule_ids = [r.rule_id for r in ctx.results]
         assert "WA301" not in rule_ids
 
+    def test_wa600_disabled_rule_through_pipeline(self):
+        """WA600 should fire for enabled: false through the full pipeline."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                {
+                    "ref": "disabled-rule",
+                    "enabled": False,
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "VisibilityConfig": {
+                        "SampledRequestsEnabled": True,
+                        "CloudWatchMetricsEnabled": True,
+                        "MetricName": "disabled-rule",
+                    },
+                    "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa600 = [r for r in ctx.results if r.rule_id == "WA600"]
+        assert len(wa600) == 1
+        assert wa600[0].phase == "aws_waf_custom_rules"
+
+    def test_wa600_filtered_by_severity(self):
+        """WA600 (INFO) should be excluded when severity filter is WARNING."""
+        ctx = LintContext(severity_filter=Severity.WARNING)
+        rules_data = {
+            "aws_waf_custom_rules": [
+                {
+                    "ref": "disabled-rule",
+                    "enabled": False,
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "VisibilityConfig": {
+                        "SampledRequestsEnabled": True,
+                        "CloudWatchMetricsEnabled": True,
+                        "MetricName": "disabled-rule",
+                    },
+                    "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        rule_ids = [r.rule_id for r in ctx.results]
+        assert "WA600" not in rule_ids
+
     def test_multiple_phases(self):
         """aws_lint should check all AWS phases present in the data."""
         ctx = LintContext()

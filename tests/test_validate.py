@@ -1590,6 +1590,53 @@ class TestCustomResponseCode:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# WA600  Rule is disabled
+# ---------------------------------------------------------------------------
+
+
+class TestDisabledRule:
+    def test_wa600_enabled_false(self):
+        r = _rule(enabled=False)
+        results = validate_rules([r])
+        assert "WA600" in _ids(results)
+        wa600 = [x for x in results if x.rule_id == "WA600"]
+        assert wa600[0].severity.name == "INFO"
+        assert "disabled" in wa600[0].message
+
+    def test_wa600_enabled_true_no_warning(self):
+        assert "WA600" not in _ids(validate_rules([_rule(enabled=True)]))
+
+    def test_wa600_no_enabled_field(self):
+        """Default rule (no enabled field) should not fire WA600."""
+        assert "WA600" not in _ids(validate_rules([_rule()]))
+
+    def test_wa600_enabled_none(self):
+        """enabled: null should not fire WA600 (only explicit False)."""
+        assert "WA600" not in _ids(validate_rules([_rule(enabled=None)]))
+
+    def test_wa600_enabled_zero(self):
+        """enabled: 0 is falsy but not 'is False' — should not fire."""
+        assert "WA600" not in _ids(validate_rules([_rule(enabled=0)]))
+
+    def test_wa600_field_ref(self):
+        """WA600 should include the ref and field in the result."""
+        results = validate_rules([_rule(ref="my-disabled-rule", enabled=False)])
+        wa600 = [x for x in results if x.rule_id == "WA600"]
+        assert wa600[0].ref == "my-disabled-rule"
+        assert wa600[0].field == "enabled"
+
+    def test_wa600_suggestion(self):
+        results = validate_rules([_rule(enabled=False)])
+        wa600 = [x for x in results if x.rule_id == "WA600"]
+        assert "Remove" in wa600[0].suggestion
+
+    def test_wa020_not_fired_for_enabled(self):
+        """The 'enabled' field should be recognized, not flagged as unknown."""
+        results = validate_rules([_rule(enabled=True)])
+        assert "WA020" not in _ids(results)
+
+
 class TestEdgeCases:
     def test_multiple_errors_same_rule(self):
         r = {"Priority": -1}
@@ -1617,3 +1664,196 @@ class TestEdgeCases:
     def test_statement_not_dict(self):
         results = validate_rules([_rule(Statement="invalid")])
         assert "WA300" not in _ids(results)
+
+
+# ---------------------------------------------------------------------------
+# WA319  Invalid regex pattern in RegexMatchStatement
+# ---------------------------------------------------------------------------
+
+
+class TestRegexValidation:
+    def _regex_stmt(self, regex_string):
+        return {
+            "RegexMatchStatement": {
+                "RegexString": regex_string,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+
+    def test_valid_regex_no_error(self):
+        stmt = self._regex_stmt("^/api/v[0-9]+")
+        assert "WA319" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_invalid_regex_fires(self):
+        stmt = self._regex_stmt("(unclosed")
+        assert "WA319" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_invalid_regex_bad_escape(self):
+        stmt = self._regex_stmt("\\k")
+        # Python re treats \k as an invalid escape
+        results = validate_rules([_rule(Statement=stmt)])
+        # NOTE: Python 3.12+ raises re.error on bad escapes; older versions
+        # may or may not.  Only assert WA319 fires when re.compile actually
+        # raises -- the rule itself is correct either way.
+        import re
+
+        try:
+            re.compile("\\k")
+        except re.error:
+            assert "WA319" in _ids(results)
+        else:
+            assert "WA319" not in _ids(results)
+
+    def test_missing_regex_string_no_fire(self):
+        """No RegexString key → WA314 handles it, not WA319."""
+        stmt = {
+            "RegexMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA314" in _ids(results)
+        assert "WA319" not in _ids(results)
+
+    def test_error_message_includes_details(self):
+        stmt = self._regex_stmt("(unclosed")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa319 = [r for r in results if r.rule_id == "WA319"]
+        assert len(wa319) == 1
+        assert "Invalid regex pattern" in wa319[0].message
+        # The re.error message should be included
+        assert len(wa319[0].message) > len("Invalid regex pattern: ")
+
+    def test_field_is_set(self):
+        stmt = self._regex_stmt("(unclosed")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa319 = [r for r in results if r.rule_id == "WA319"]
+        assert wa319[0].field == "Statement.RegexMatchStatement.RegexString"
+
+    def test_suggestion_is_set(self):
+        stmt = self._regex_stmt("(unclosed")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa319 = [r for r in results if r.rule_id == "WA319"]
+        assert wa319[0].suggestion == "Fix the regex syntax"
+
+    def test_regex_string_not_string_no_fire(self):
+        """Non-string RegexString should not fire WA319 (type issues are separate)."""
+        stmt = {
+            "RegexMatchStatement": {
+                "RegexString": 42,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA319" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_recursive_in_not_statement(self):
+        """WA319 fires recursively inside compound statements."""
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "RegexMatchStatement": {
+                        "RegexString": "(unclosed",
+                        "FieldToMatch": {"UriPath": {}},
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    }
+                }
+            }
+        }
+        assert "WA319" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA321  Redundant double negation (NotStatement wrapping NotStatement)
+# ---------------------------------------------------------------------------
+
+
+class TestDoubleNegation:
+    def test_double_not_fires(self):
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}
+                }
+            }
+        }
+        assert "WA321" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_single_not_no_fire(self):
+        stmt = {"NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}}
+        assert "WA321" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_not_wrapping_other_no_fire(self):
+        """NotStatement wrapping a non-NotStatement should not fire WA321."""
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "ByteMatchStatement": {
+                        "SearchString": "x",
+                        "FieldToMatch": {"UriPath": {}},
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        "PositionalConstraint": "CONTAINS",
+                    }
+                }
+            }
+        }
+        assert "WA321" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_severity_is_warning(self):
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}
+                }
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa321 = [r for r in results if r.rule_id == "WA321"]
+        assert len(wa321) == 1
+        assert wa321[0].severity.name == "WARNING"
+
+    def test_suggestion(self):
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}
+                }
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa321 = [r for r in results if r.rule_id == "WA321"]
+        assert wa321[0].suggestion == "Remove both NotStatement wrappers to simplify"
+
+    def test_field_is_set(self):
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}
+                }
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa321 = [r for r in results if r.rule_id == "WA321"]
+        assert wa321[0].field == "Statement.NotStatement"
+
+    def test_double_not_inside_compound(self):
+        """Double negation inside an AndStatement is still detected."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "NotStatement": {
+                            "Statement": {
+                                "NotStatement": {
+                                    "Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}
+                                }
+                            }
+                        }
+                    },
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                ]
+            }
+        }
+        assert "WA321" in _ids(validate_rules([_rule(Statement=stmt)]))

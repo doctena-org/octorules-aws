@@ -42,12 +42,21 @@ WA501 = RuleMeta("WA501", "visibility", "Duplicate MetricName across phases", Se
 WA020 = RuleMeta("WA020", "structure", "Unknown top-level rule field", Severity.WARNING)
 WA021 = RuleMeta("WA021", "structure", "Action/OverrideAction must be dict", Severity.ERROR)
 
-# WA314-WA318: Statement deep validation
+# WA314-WA321: Statement deep validation
 WA314 = RuleMeta("WA314", "statement", "Missing required field in statement type", Severity.ERROR)
 WA315 = RuleMeta("WA315", "statement", "Invalid enum value in statement", Severity.ERROR)
 WA316 = RuleMeta("WA316", "statement", "FieldToMatch validation error", Severity.ERROR)
 WA317 = RuleMeta("WA317", "statement", "TextTransformations validation error", Severity.ERROR)
 WA318 = RuleMeta("WA318", "statement", "RateBasedStatement conditional requirement", Severity.ERROR)
+WA319 = RuleMeta(
+    "WA319", "statement", "Invalid regex pattern in RegexMatchStatement", Severity.ERROR
+)
+WA321 = RuleMeta(
+    "WA321",
+    "statement",
+    "Redundant double negation (NotStatement wrapping NotStatement)",
+    Severity.WARNING,
+)
 
 # WA350-WA353: Action parameter validation
 WA350 = RuleMeta("WA350", "action", "Action must have exactly one key", Severity.ERROR)
@@ -62,5 +71,8 @@ WA022 = RuleMeta("WA022", "structure", "Duplicate ref within phase", Severity.ER
 WA520 = RuleMeta(
     "WA520", "cross-rule", "Duplicate statement across rules in phase", Severity.WARNING
 )
+
+# WA600: Best practice
+WA600 = RuleMeta("WA600", "best_practice", "Rule is disabled (enabled: false)", Severity.INFO)
 
 AWS_RULE_METAS: list[RuleMeta] = [obj for obj in globals().values() if isinstance(obj, RuleMeta)]

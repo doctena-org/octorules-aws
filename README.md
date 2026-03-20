@@ -130,23 +130,24 @@ lists:
 
 ## Linting
 
-39 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
+42 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
 
 | Prefix | Category | Rules |
 |--------|----------|-------|
 | WA001-WA005, WA010, WA020-WA022 | Structure & YAML | 9 |
 | WA100-WA101 | Priority | 2 |
 | WA200-WA201 | Action type | 2 |
-| WA300-WA318 | Statement deep validation | 16 |
+| WA300-WA321 | Statement deep validation | 18 |
 | WA350-WA353 | Action parameters | 4 |
 | WA400-WA402 | VisibilityConfig | 3 |
 | WA500-WA501, WA520 | Cross-rule | 3 |
+| WA600 | Best practice | 1 |
 
 ```bash
 octorules lint --config config.yaml
 ```
 
-Lint rules are registered automatically when octorules-aws is installed.
+Lint rules are registered automatically when octorules-aws is installed. See [docs/lint.md](docs/lint.md) for the full rule reference with examples.
 
 > **Note:** WA500 checks for duplicate MetricName within a single phase. WA501 checks across phases — AWS WAF requires MetricName to be unique across **all** rules in a Web ACL.
 
