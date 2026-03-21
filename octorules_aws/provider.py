@@ -511,6 +511,7 @@ class AwsWafProvider:
                     log.debug("Stale LockToken for IPSet %s delete, retrying", list_id)
                     continue
                 raise
+        raise ProviderError("Lock retry exhausted")  # pragma: no cover
 
     @_wrap_provider_errors
     def update_list_description(self, scope: Scope, list_id: str, description: str) -> None:
@@ -538,6 +539,7 @@ class AwsWafProvider:
                     log.debug("Stale LockToken for IPSet %s description, retrying", list_id)
                     continue
                 raise
+        raise ProviderError("Lock retry exhausted")  # pragma: no cover
 
     @_wrap_provider_errors
     def get_list_items(
