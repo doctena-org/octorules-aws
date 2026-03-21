@@ -183,18 +183,22 @@ class AwsWafProvider:
 
     @property
     def max_workers(self) -> int:
+        """Maximum number of concurrent workers for parallel operations."""
         return self._max_workers
 
     @property
     def account_id(self) -> str | None:
+        """Return None; AWS WAF does not use account-level identifiers."""
         return None
 
     @property
     def account_name(self) -> str | None:
+        """Return None; AWS WAF does not use account-level names."""
         return None
 
     @property
     def zone_plans(self) -> dict[str, str]:
+        """Return empty dict; AWS WAF has no zone-level plan tiers."""
         return {}
 
     # -- Pagination helper --

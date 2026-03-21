@@ -299,6 +299,7 @@ def _check_visibility(
     ref: str,
     seen_metrics: dict[str, list[str]],
 ) -> None:
+    """WA003/WA400/WA401/WA402 -- Validate VisibilityConfig fields and track metric names."""
     if "VisibilityConfig" not in rule:
         results.append(
             LintResult(
