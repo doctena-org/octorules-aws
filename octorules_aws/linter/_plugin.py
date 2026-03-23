@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
 from octorules.phases import PHASE_BY_NAME
 
 from octorules_aws.linter._rules import AWS_RULE_METAS
-from octorules_aws.validate import validate_rules
+from octorules_aws.validate import _estimate_rule_wcu, validate_rules
 
 # Phase names owned by this provider.
 _AWS_PHASE_NAMES = frozenset(
@@ -22,6 +23,13 @@ _AWS_PHASE_NAMES = frozenset(
 )
 
 AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
+
+# Default Web ACL WCU limit
+_WCU_LIMIT = 1500
+
+# ARN pattern to extract IP Set name:
+# arn:aws:wafv2:REGION:ACCOUNT:SCOPE/ipset/NAME/ID
+_IPSET_ARN_RE = re.compile(r"^arn:aws[\w-]*:wafv2:[^:]+:[^:]+:[^/]+/ipset/([^/]+)/[^/]+$")
 
 
 def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -107,6 +115,142 @@ def _check_duplicate_statements(rules_data: dict[str, Any], ctx: LintContext) ->
                 )
 
 
+def _check_wcu_capacity(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA340: Estimate total WCU across all AWS phases and warn if over limit.
+
+    AWS WAF Web ACLs have a default capacity of 1500 WCU. This check sums
+    the estimated WCU for all rules across all phases and warns if the total
+    exceeds the limit.
+    """
+    total_wcu = 0
+    # Track per-phase totals for the message
+    phase_totals: list[tuple[str, int]] = []
+
+    for phase_name, rules in rules_data.items():
+        if phase_name not in _AWS_PHASE_NAMES:
+            continue
+        if phase_name not in PHASE_BY_NAME:
+            continue
+        if ctx.phase_filter and phase_name not in ctx.phase_filter:
+            continue
+        if not isinstance(rules, list):
+            continue
+
+        phase_wcu = 0
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            phase_wcu += _estimate_rule_wcu(rule)
+
+        if phase_wcu > 0:
+            phase_totals.append((phase_name, phase_wcu))
+            total_wcu += phase_wcu
+
+    if total_wcu > _WCU_LIMIT:
+        # Use the first phase as the result phase
+        result_phase = phase_totals[0][0] if phase_totals else ""
+        ctx.add(
+            LintResult(
+                rule_id="WA340",
+                severity=Severity.WARNING,
+                message=(f"Estimated total WCU ({total_wcu}) exceeds Web ACL limit ({_WCU_LIMIT})"),
+                phase=result_phase,
+            )
+        )
+
+
+def _collect_ipset_arns_from_statement(stmt: dict) -> list[str]:
+    """Recursively collect all IPSetReferenceStatement ARNs from a statement tree."""
+    arns: list[str] = []
+    for stype, inner in stmt.items():
+        if stype == "IPSetReferenceStatement" and isinstance(inner, dict):
+            arn = inner.get("ARN")
+            if isinstance(arn, str):
+                arns.append(arn)
+        elif stype in ("AndStatement", "OrStatement") and isinstance(inner, dict):
+            stmts = inner.get("Statements", [])
+            if isinstance(stmts, list):
+                for s in stmts:
+                    if isinstance(s, dict):
+                        arns.extend(_collect_ipset_arns_from_statement(s))
+        elif stype == "NotStatement" and isinstance(inner, dict):
+            nested = inner.get("Statement")
+            if isinstance(nested, dict):
+                arns.extend(_collect_ipset_arns_from_statement(nested))
+        elif stype == "RateBasedStatement" and isinstance(inner, dict):
+            sds = inner.get("ScopeDownStatement")
+            if isinstance(sds, dict):
+                arns.extend(_collect_ipset_arns_from_statement(sds))
+    return arns
+
+
+def _check_ipset_references(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA326: Check if IPSet ARNs reference IP Sets not in the lists section.
+
+    Extracts the IP Set name from the ARN and checks if it appears in the
+    lists section of the rules data. If not, emit an INFO suggestion.
+    """
+    # Collect list names from the lists section
+    lists_section = rules_data.get("lists")
+    if not isinstance(lists_section, list):
+        # No lists section — nothing to compare against
+        return
+
+    list_names: set[str] = set()
+    for lst in lists_section:
+        if isinstance(lst, dict):
+            name = lst.get("name")
+            if isinstance(name, str):
+                list_names.add(name)
+
+    if not list_names:
+        # Lists section exists but is empty — skip
+        return
+
+    # Collect all IPSet ARNs from all AWS phases
+    for phase_name, rules in rules_data.items():
+        if phase_name not in _AWS_PHASE_NAMES:
+            continue
+        if phase_name not in PHASE_BY_NAME:
+            continue
+        if ctx.phase_filter and phase_name not in ctx.phase_filter:
+            continue
+        if not isinstance(rules, list):
+            continue
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            stmt = rule.get("Statement")
+            if not isinstance(stmt, dict):
+                continue
+
+            ref = str(rule.get("ref", ""))
+            arns = _collect_ipset_arns_from_statement(stmt)
+
+            for arn in arns:
+                match = _IPSET_ARN_RE.match(arn)
+                if not match:
+                    continue  # Not a valid ipset ARN — WA302 handles format
+                ipset_name = match.group(1)
+                if ipset_name not in list_names:
+                    ctx.add(
+                        LintResult(
+                            rule_id="WA326",
+                            severity=Severity.INFO,
+                            message=(
+                                f"IPSetReferenceStatement references '{ipset_name}'"
+                                " which is not in the lists section. If this is a"
+                                " managed IP Set, add it to lists for full lifecycle"
+                                " management."
+                            ),
+                            phase=phase_name,
+                            ref=ref,
+                            field="Statement.IPSetReferenceStatement.ARN",
+                        )
+                    )
+
+
 def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """Run all AWS WAF lint checks on a zone rules file."""
     for phase_name, rules in rules_data.items():
@@ -126,3 +270,5 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     # Cross-phase checks (run after per-phase validation)
     _check_cross_phase_metrics(rules_data, ctx)
     _check_duplicate_statements(rules_data, ctx)
+    _check_wcu_capacity(rules_data, ctx)
+    _check_ipset_references(rules_data, ctx)

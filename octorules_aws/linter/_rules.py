@@ -28,6 +28,14 @@ WA304 = RuleMeta(
 )
 WA305 = RuleMeta("WA305", "statement", "Invalid AggregateKeyType", Severity.ERROR)
 WA306 = RuleMeta("WA306", "statement", "RateBasedStatement.Limit exceeds maximum", Severity.ERROR)
+WA307 = RuleMeta("WA307", "statement", "SearchString exceeds 8192-byte limit", Severity.ERROR)
+WA308 = RuleMeta("WA308", "statement", "RegexString exceeds 512-byte limit", Severity.ERROR)
+WA309 = RuleMeta(
+    "WA309",
+    "statement",
+    "RateBasedStatement without ScopeDownStatement rate-limits all traffic",
+    Severity.WARNING,
+)
 WA310 = RuleMeta(
     "WA310", "statement", "And/OrStatement must have at least 2 nested statements", Severity.ERROR
 )
@@ -51,6 +59,9 @@ WA318 = RuleMeta("WA318", "statement", "RateBasedStatement conditional requireme
 WA319 = RuleMeta(
     "WA319", "statement", "Invalid regex pattern in RegexMatchStatement", Severity.ERROR
 )
+WA320 = RuleMeta(
+    "WA320", "statement", "FieldToMatch type incompatible with statement type", Severity.WARNING
+)
 WA321 = RuleMeta(
     "WA321",
     "statement",
@@ -67,9 +78,62 @@ WA353 = RuleMeta("WA353", "action", "CustomResponse status code invalid", Severi
 # WA022: Duplicate ref
 WA022 = RuleMeta("WA022", "structure", "Duplicate ref within phase", Severity.ERROR)
 
+# WA323-WA325: Statement limit checks
+WA323 = RuleMeta("WA323", "statement", "GeoMatchStatement exceeds 25 country codes", Severity.ERROR)
+WA324 = RuleMeta(
+    "WA324", "statement", "RateBasedStatement.CustomKeys exceeds maximum of 5", Severity.ERROR
+)
+WA325 = RuleMeta(
+    "WA325",
+    "statement",
+    "FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns",
+    Severity.ERROR,
+)
+
+# WA331-WA332: TextTransformation limit checks
+WA331 = RuleMeta(
+    "WA331", "statement", "TextTransformations exceeds maximum of 10 per statement", Severity.ERROR
+)
+WA332 = RuleMeta("WA332", "statement", "Duplicate TextTransformation Priority", Severity.ERROR)
+
+# WA334-WA336: Statement value validation
+WA334 = RuleMeta(
+    "WA334", "statement", "SizeConstraintStatement.Size must be non-negative", Severity.ERROR
+)
+WA335 = RuleMeta("WA335", "statement", "JsonBody.MatchScope invalid", Severity.ERROR)
+WA336 = RuleMeta("WA336", "statement", "JsonBody.InvalidFallbackBehavior invalid", Severity.ERROR)
+
 # WA520: Cross-rule analysis
 WA520 = RuleMeta(
     "WA520", "cross-rule", "Duplicate statement across rules in phase", Severity.WARNING
+)
+
+# WA326: Cross-file ARN reference validation
+WA326 = RuleMeta(
+    "WA326",
+    "cross-rule",
+    "IPSetReferenceStatement references IP Set not in lists section",
+    Severity.INFO,
+)
+
+# WA340: WCU capacity estimation
+WA340 = RuleMeta(
+    "WA340", "cross-rule", "Estimated total WCU exceeds Web ACL limit", Severity.WARNING
+)
+
+# WA341-WA343: Heuristic always-true/false/contradictory
+WA341 = RuleMeta("WA341", "statement", "GeoMatchStatement likely always true", Severity.WARNING)
+WA342 = RuleMeta(
+    "WA342",
+    "statement",
+    "Contradictory AND conditions (non-overlapping GeoMatch sets)",
+    Severity.WARNING,
+)
+WA343 = RuleMeta(
+    "WA343",
+    "statement",
+    "Always-false pattern (SizeConstraint size < 0 is impossible)",
+    Severity.WARNING,
 )
 
 # WA600: Best practice

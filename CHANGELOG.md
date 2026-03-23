@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **WA326** (INFO): IPSetReferenceStatement references an IP Set name not
+  found in the `lists` section. Suggests adding it for full lifecycle
+  management.
+- **WA340** (WARNING): Estimated total WCU across all phases exceeds the
+  Web ACL default limit of 1,500. Includes per-statement-type WCU cost
+  estimation with recursive compound statement support.
+- **WA341** (WARNING): GeoMatchStatement with >= 200 country codes is
+  likely always true (covers nearly all countries).
+- **WA342** (WARNING): AndStatement contains GeoMatchStatements with
+  non-overlapping country code sets — no request can satisfy both
+  conditions simultaneously.
+- **WA343** (WARNING): SizeConstraintStatement with `Size=0` and
+  `ComparisonOperator=LT` is always false (size cannot be negative).
+- **WA307** (ERROR): SearchString exceeds 8,192-byte AWS WAF limit.
+- **WA308** (ERROR): RegexString exceeds 512-byte AWS WAF limit.
+- **WA309** (WARNING): RateBasedStatement without ScopeDownStatement
+  rate-limits all traffic.
+- **WA320** (WARNING): FieldToMatch type incompatible with statement type
+  (e.g., JsonBody on LabelMatchStatement).
+- **WA323** (ERROR): GeoMatchStatement exceeds maximum of 25 country codes.
+- **WA324** (ERROR): RateBasedStatement.CustomKeys exceeds maximum of 5.
+- **WA325** (ERROR): FieldToMatch Headers/Cookies MatchPattern exceeds
+  maximum of 5 patterns.
+- **WA331** (ERROR): TextTransformations exceeds maximum of 10 per statement.
+- **WA332** (ERROR): Duplicate TextTransformation Priority values.
+- **WA334** (ERROR): SizeConstraintStatement.Size must be non-negative.
+- **WA335** (ERROR): JsonBody.MatchScope must be ALL, KEY, or VALUE.
+- **WA336** (ERROR): JsonBody.InvalidFallbackBehavior must be MATCH,
+  NO_MATCH, or EVALUATE_AS_STRING.
+- **Rule Group lifecycle management.** octorules can now create and delete
+  AWS WAF Rule Groups declaratively. New rulesets without an `id` field
+  (but with a `capacity` field) are created automatically. Rulesets removed
+  from YAML are deleted from AWS.
+- `create_custom_ruleset()` and `delete_custom_ruleset()` provider methods.
+- Lock retry with linear backoff for all optimistic-lock operations
+  (`_with_lock_retry` helper replaces 5 duplicated retry loops).
+
+### Changed
+- Requires `octorules>=0.18.0`.
+
 ## [0.3.0] - 2026-03-20
 
 ### Added

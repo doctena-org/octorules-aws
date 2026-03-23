@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **42 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **59 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -69,6 +69,9 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA304](#wa304--ratebasedstatement-missing-aggregatekeytype) | RateBasedStatement missing AggregateKeyType | ERROR |
 | [WA305](#wa305--invalid-aggregatekeytype) | Invalid AggregateKeyType | ERROR |
 | [WA306](#wa306--ratebasedstatementlimit-exceeds-maximum) | RateBasedStatement.Limit exceeds maximum | ERROR |
+| [WA307](#wa307--searchstring-exceeds-8192-byte-limit) | SearchString exceeds 8192-byte limit | ERROR |
+| [WA308](#wa308--regexstring-exceeds-512-byte-limit) | RegexString exceeds 512-byte limit | ERROR |
+| [WA309](#wa309--ratebasedstatement-without-scopedownstatement) | RateBasedStatement without ScopeDownStatement rate-limits all traffic | WARNING |
 | [WA310](#wa310--andorstatement-must-have-at-least-2-nested-statements) | And/OrStatement must have at least 2 nested statements | ERROR |
 | [WA311](#wa311--notstatement-missing-required-statement-field) | NotStatement missing required 'Statement' field | ERROR |
 | [WA312](#wa312--bytematchstatement-missing-required-field) | ByteMatchStatement missing required field | ERROR |
@@ -79,7 +82,16 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA317](#wa317--texttransformations-validation-error) | TextTransformations validation error | ERROR |
 | [WA318](#wa318--ratebasedstatement-conditional-requirement) | RateBasedStatement conditional requirement | ERROR |
 | [WA319](#wa319--invalid-regex-pattern-in-regexmatchstatement) | Invalid regex pattern in RegexMatchStatement | ERROR |
+| [WA320](#wa320--fieldtomatch-type-incompatible-with-statement-type) | FieldToMatch type incompatible with statement type | WARNING |
 | [WA321](#wa321--redundant-double-negation-notstatement-wrapping-notstatement) | Redundant double negation (NotStatement wrapping NotStatement) | WARNING |
+| [WA323](#wa323--geomatchstatement-exceeds-25-country-codes) | GeoMatchStatement exceeds 25 country codes | ERROR |
+| [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
+| [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
+| [WA331](#wa331--texttransformations-exceeds-maximum-of-10-per-statement) | TextTransformations exceeds maximum of 10 per statement | ERROR |
+| [WA332](#wa332--duplicate-texttransformation-priority) | Duplicate TextTransformation Priority | ERROR |
+| [WA334](#wa334--sizeconstraintstatementssize-must-be-non-negative) | SizeConstraintStatement.Size must be non-negative | ERROR |
+| [WA335](#wa335--jsonbodymatchscope-invalid) | JsonBody.MatchScope invalid | ERROR |
+| [WA336](#wa336--jsonbodyinvalidfallbackbehavior-invalid) | JsonBody.InvalidFallbackBehavior invalid | ERROR |
 | [WA350](#wa350--action-must-have-exactly-one-key) | Action must have exactly one key | ERROR |
 | [WA351](#wa351--unknown-action-type) | Unknown action type | ERROR |
 | [WA352](#wa352--overrideaction-on-non-group-statement) | OverrideAction on non-group statement | WARNING |
@@ -90,6 +102,11 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA500](#wa500--duplicate-metricname-across-rules) | Duplicate MetricName across rules | ERROR |
 | [WA501](#wa501--duplicate-metricname-across-phases) | Duplicate MetricName across phases | ERROR |
 | [WA520](#wa520--duplicate-statement-across-rules-in-phase) | Duplicate statement across rules in phase | WARNING |
+| [WA326](#wa326--ipsetreferencestatement-references-ip-set-not-in-lists-section) | IPSetReferenceStatement references IP Set not in lists section | INFO |
+| [WA340](#wa340--estimated-total-wcu-exceeds-web-acl-limit) | Estimated total WCU exceeds Web ACL limit | WARNING |
+| [WA341](#wa341--geomatchstatement-likely-always-true) | GeoMatchStatement likely always true | WARNING |
+| [WA342](#wa342--contradictory-and-conditions-non-overlapping-geomatch-sets) | Contradictory AND conditions (non-overlapping GeoMatch sets) | WARNING |
+| [WA343](#wa343--always-false-pattern-sizeconstraint-size--0-is-impossible) | Always-false pattern (SizeConstraint size < 0 is impossible) | WARNING |
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
 
 ---
@@ -101,10 +118,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA001-WA005, WA010, WA020-WA022 | Structure & YAML | 9 |
 | WA100-WA101 | Priority | 2 |
 | WA200-WA201 | Action type | 2 |
-| WA300-WA321 | Statement validation | 18 |
+| WA300-WA343 | Statement validation | 33 |
 | WA350-WA353 | Action parameters | 4 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA500-WA501, WA520 | Cross-rule | 3 |
+| WA326, WA340, WA500-WA501, WA520 | Cross-rule | 5 |
 | WA600 | Best practice | 1 |
 
 ---
@@ -613,6 +630,88 @@ The `Limit` value exceeds the AWS WAF maximum of 2,000,000,000 requests per 5-mi
         Limit: 2000000000
 ```
 
+### WA307 -- SearchString exceeds 8192-byte limit
+
+**Severity:** ERROR
+
+The `SearchString` in a `ByteMatchStatement` must not exceed 8,192 bytes when encoded as UTF-8. AWS WAF rejects longer values at the API level.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      ByteMatchStatement:
+        SearchString: "<very long string exceeding 8192 bytes>"
+        FieldToMatch:
+          UriPath: {}
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+        PositionalConstraint: CONTAINS
+```
+
+**Fix:** Shorten the `SearchString` to fit within 8,192 bytes. For multi-byte characters (e.g., accented letters, emoji), note that the byte count may exceed the character count.
+
+> **Note:** The limit is measured in bytes (UTF-8), not characters. A string of 8,192 ASCII characters is exactly at the limit, but 4,097 two-byte characters (8,194 bytes) exceeds it.
+
+### WA308 -- RegexString exceeds 512-byte limit
+
+**Severity:** ERROR
+
+The `RegexString` in a `RegexMatchStatement` must not exceed 512 bytes when encoded as UTF-8. AWS WAF rejects longer patterns at the API level.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      RegexMatchStatement:
+        RegexString: "<very long regex exceeding 512 bytes>"
+        FieldToMatch:
+          UriPath: {}
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Simplify the regex pattern to fit within 512 bytes. Consider using a `RegexPatternSetReferenceStatement` with multiple shorter patterns if the logic requires a long expression.
+
+> **Note:** This check only fires when `RegexString` is present and is a string. If `RegexString` is missing entirely, [WA314](#wa314--missing-required-field-in-statement-type) catches it.
+
+### WA309 -- RateBasedStatement without ScopeDownStatement
+
+**Severity:** WARNING
+
+A `RateBasedStatement` without a `ScopeDownStatement` applies the rate limit to **all** incoming traffic. This is usually unintentional -- most rate-limiting rules should target a specific subset of requests (e.g., login endpoints, API paths).
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      RateBasedStatement:
+        Limit: 200
+        AggregateKeyType: IP
+```
+
+**Fix:** Add a `ScopeDownStatement` to limit which requests are counted:
+
+```yaml
+    Statement:
+      RateBasedStatement:
+        Limit: 200
+        AggregateKeyType: IP
+        ScopeDownStatement:
+          ByteMatchStatement:
+            SearchString: "/api/login"
+            FieldToMatch:
+              UriPath: {}
+            TextTransformations:
+              - Priority: 0
+                Type: NONE
+            PositionalConstraint: STARTS_WITH
+```
+
+> **Note:** This is a warning, not an error. A blanket rate limit on all traffic is valid AWS WAF configuration -- it is just rarely the intended behavior. Suppress with `# octorules:disable=WA309` if intentional.
+
 ### WA310 -- And/OrStatement must have at least 2 nested statements
 
 **Severity:** ERROR
@@ -881,6 +980,36 @@ The `RegexString` in a `RegexMatchStatement` must be a valid regular expression.
 
 > **Note:** This check only fires when `RegexString` is present and is a string. If `RegexString` is missing entirely, [WA314](#wa314--missing-required-field-in-statement-type) catches it instead. AWS WAF uses a regex dialect similar to PCRE; Python's `re` module catches most common syntax errors but may not flag every incompatibility.
 
+### WA320 -- FieldToMatch type incompatible with statement type
+
+**Severity:** WARNING
+
+A `FieldToMatch` type is used with a statement type that does not inspect request content at that level. Specifically, `JsonBody` is only meaningful with statement types that inspect the request body: `ByteMatchStatement`, `RegexMatchStatement`, `RegexPatternSetReferenceStatement`, `SizeConstraintStatement`, `SqliMatchStatement`, and `XssMatchStatement`.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      LabelMatchStatement:
+        Scope: LABEL
+        Key: awswaf:managed:test
+        FieldToMatch:
+          JsonBody:
+            MatchScope: ALL
+            InvalidFallbackBehavior: MATCH
+```
+
+**Fix:** Remove the `FieldToMatch` field or use a compatible statement type:
+
+```yaml
+    Statement:
+      LabelMatchStatement:
+        Scope: LABEL
+        Key: awswaf:managed:test
+```
+
+> **Note:** This rule currently only checks `JsonBody` compatibility. Other `FieldToMatch` types (e.g., `UriPath`, `Headers`) are broadly applicable across statement types.
+
 ### WA321 -- Redundant double negation (NotStatement wrapping NotStatement)
 
 **Severity:** WARNING
@@ -905,6 +1034,178 @@ A `NotStatement` whose inner `Statement` is itself a `NotStatement` is a redunda
     Statement:
       GeoMatchStatement:
         CountryCodes: ["CN"]
+```
+
+### WA323 -- GeoMatchStatement exceeds 25 country codes
+
+**Severity:** ERROR
+
+The `CountryCodes` list in a `GeoMatchStatement` must not exceed 25 entries. AWS WAF enforces this limit at the API level.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      GeoMatchStatement:
+        CountryCodes: ["US", "DE", "FR", "GB", "JP", "CN", "RU", "BR", "IN", "AU", "CA", "MX", "KR", "IT", "ES", "NL", "SE", "NO", "DK", "FI", "PL", "CZ", "AT", "CH", "BE", "IE"]
+```
+
+**Fix:** Reduce the list to 25 or fewer country codes. If you need to match more countries, use an `OrStatement` with multiple `GeoMatchStatement` blocks.
+
+### WA324 -- RateBasedStatement.CustomKeys exceeds maximum of 5
+
+**Severity:** ERROR
+
+The `CustomKeys` list in a `RateBasedStatement` must not exceed 5 entries. AWS WAF enforces this limit at the API level.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      RateBasedStatement:
+        Limit: 200
+        AggregateKeyType: CUSTOM_KEYS
+        CustomKeys:
+          - Header: { Name: x-key-1 }
+          - Header: { Name: x-key-2 }
+          - Header: { Name: x-key-3 }
+          - Header: { Name: x-key-4 }
+          - Header: { Name: x-key-5 }
+          - Header: { Name: x-key-6 }    # exceeds limit
+```
+
+**Fix:** Reduce the `CustomKeys` list to at most 5 entries.
+
+### WA325 -- FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns
+
+**Severity:** ERROR
+
+The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 entries in any of its inclusion/exclusion lists (`IncludedHeaders`, `ExcludedHeaders`, `IncludedCookies`, `ExcludedCookies`). AWS WAF enforces this limit at the API level.
+
+**Triggers on:**
+
+```yaml
+        FieldToMatch:
+          Headers:
+            MatchPattern:
+              IncludedHeaders: ["a", "b", "c", "d", "e", "f"]    # 6 > 5
+            MatchScope: ALL
+            OversizeHandling: MATCH
+```
+
+**Fix:** Reduce the list to 5 or fewer patterns.
+
+### WA331 -- TextTransformations exceeds maximum of 10 per statement
+
+**Severity:** ERROR
+
+The `TextTransformations` list in a statement must not exceed 10 entries. AWS WAF enforces this limit at the API level.
+
+**Triggers on:**
+
+```yaml
+        TextTransformations:
+          - Priority: 0
+            Type: URL_DECODE
+          - Priority: 1
+            Type: LOWERCASE
+          # ... (11 or more entries)
+```
+
+**Fix:** Reduce the list to 10 or fewer transformations. Consider whether all transformations are necessary.
+
+### WA332 -- Duplicate TextTransformation Priority
+
+**Severity:** ERROR
+
+Each entry in a `TextTransformations` list must have a unique `Priority` value. Duplicate priorities are rejected by the AWS WAF API.
+
+**Triggers on:**
+
+```yaml
+        TextTransformations:
+          - Priority: 0
+            Type: URL_DECODE
+          - Priority: 0          # duplicate Priority
+            Type: LOWERCASE
+```
+
+**Fix:** Assign unique `Priority` values to each transformation:
+
+```yaml
+        TextTransformations:
+          - Priority: 0
+            Type: URL_DECODE
+          - Priority: 1
+            Type: LOWERCASE
+```
+
+### WA334 -- SizeConstraintStatement.Size must be non-negative
+
+**Severity:** ERROR
+
+The `Size` field in a `SizeConstraintStatement` must be a non-negative integer (0 or greater). Negative values are not valid.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      SizeConstraintStatement:
+        FieldToMatch:
+          Body: {}
+        ComparisonOperator: GT
+        Size: -1
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Use a non-negative value:
+
+```yaml
+        Size: 0
+```
+
+### WA335 -- JsonBody.MatchScope invalid
+
+**Severity:** ERROR
+
+The `MatchScope` field in a `JsonBody` `FieldToMatch` must be one of the valid values: `ALL`, `KEY`, `VALUE`.
+
+**Triggers on:**
+
+```yaml
+        FieldToMatch:
+          JsonBody:
+            MatchScope: KEYS         # not valid
+            InvalidFallbackBehavior: MATCH
+```
+
+**Fix:** Use a valid `MatchScope` value:
+
+```yaml
+            MatchScope: ALL
+```
+
+### WA336 -- JsonBody.InvalidFallbackBehavior invalid
+
+**Severity:** ERROR
+
+The `InvalidFallbackBehavior` field in a `JsonBody` `FieldToMatch` must be one of the valid values: `EVALUATE_AS_STRING`, `MATCH`, `NO_MATCH`.
+
+**Triggers on:**
+
+```yaml
+        FieldToMatch:
+          JsonBody:
+            MatchScope: ALL
+            InvalidFallbackBehavior: IGNORE    # not valid
+```
+
+**Fix:** Use a valid `InvalidFallbackBehavior` value:
+
+```yaml
+            InvalidFallbackBehavior: MATCH
 ```
 
 ---
@@ -1166,6 +1467,164 @@ aws_waf_custom_rules:
 ```
 
 **Fix:** Verify this is intentional. If not, update one of the statements to match its intended condition.
+
+### WA326 -- IPSetReferenceStatement references IP Set not in lists section
+
+**Severity:** INFO
+
+An `IPSetReferenceStatement` references an IP Set (by ARN) whose name does not appear in the `lists` section of the rules file. If the IP Set is managed by octorules, it should be declared in the `lists` section for full lifecycle management (create, update, delete).
+
+The name is extracted from the ARN: `arn:aws:wafv2:REGION:ACCOUNT:SCOPE/ipset/NAME/ID`.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: allowed-ips
+    kind: ip
+    items: [...]
+
+aws_waf_custom_rules:
+  - ref: block-bad-ips
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      IPSetReferenceStatement:
+        ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/bad-ips/abc123
+        # "bad-ips" is not in the lists section
+    VisibilityConfig:
+      SampledRequestsEnabled: true
+      CloudWatchMetricsEnabled: true
+      MetricName: BlockBadIPs
+```
+
+**Fix:** Add the IP Set to the `lists` section:
+
+```yaml
+lists:
+  - name: bad-ips
+    kind: ip
+    items:
+      - ip: "1.2.3.4/32"
+```
+
+> **Note:** This check only fires when a `lists` section exists with at least one entry. If you don't use octorules-managed IP Sets, this rule won't fire.
+
+### WA340 -- Estimated total WCU exceeds Web ACL limit
+
+**Severity:** WARNING
+
+The estimated total Web ACL Capacity Units (WCU) across all AWS phases exceeds the default Web ACL limit of 1,500 WCU. Each statement type has a known base WCU cost, and compound statements (And, Or, Not, RateBasedStatement) add to the total recursively. Managed rule groups are estimated at 100 WCU each (actual cost varies).
+
+**WCU cost table:**
+
+| Statement | Base WCU |
+|-----------|----------|
+| ByteMatchStatement | 2 + (1 per TextTransformation) |
+| RegexMatchStatement | 5 + (1 per TextTransformation) |
+| RegexPatternSetReferenceStatement | 5 |
+| GeoMatchStatement | 2 |
+| IPSetReferenceStatement | 1 |
+| SizeConstraintStatement | 2 + (1 per TextTransformation) |
+| SqliMatchStatement | 15 + (1 per TextTransformation) |
+| XssMatchStatement | 15 + (1 per TextTransformation) |
+| LabelMatchStatement | 1 |
+| ManagedRuleGroupStatement | ~100 (estimate) |
+| RuleGroupReferenceStatement | 1 |
+| RateBasedStatement | 2 + ScopeDownStatement cost |
+| AndStatement | 1 + sum of nested costs |
+| OrStatement | 1 + sum of nested costs |
+| NotStatement | 1 + nested cost |
+
+Each rule also adds 1 base WCU.
+
+**Triggers on:** Web ACL with many managed rule groups or complex custom rules.
+
+**Fix:** Reduce complexity by simplifying conditions, removing unused rules, or requesting a WCU limit increase from AWS Support.
+
+> **Note:** The estimate is a lower bound. Actual WCU consumption may vary, especially for managed rule groups. Use the AWS WAF console to see the exact WCU for managed rule groups.
+
+### WA341 -- GeoMatchStatement likely always true
+
+**Severity:** WARNING
+
+A `GeoMatchStatement` lists 200 or more country codes, covering nearly all countries. This condition will match virtually all requests and is likely unintentional.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      GeoMatchStatement:
+        CountryCodes: ["AF", "AL", "DZ", ...]  # 200+ codes
+```
+
+**Fix:** If you want to match all traffic, remove the `GeoMatchStatement` entirely and use the action directly. If you want to exclude specific countries, use a `NotStatement` wrapping a `GeoMatchStatement` with the excluded countries.
+
+### WA342 -- Contradictory AND conditions (non-overlapping GeoMatch sets)
+
+**Severity:** WARNING
+
+An `AndStatement` contains two or more `GeoMatchStatement` conditions with non-overlapping `CountryCodes` sets. Since a request can only originate from one country, no request can match both conditions simultaneously, making the entire `AndStatement` unsatisfiable.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      AndStatement:
+        Statements:
+          - GeoMatchStatement:
+              CountryCodes: ["US", "CA"]
+          - GeoMatchStatement:
+              CountryCodes: ["DE", "FR"]
+```
+
+**Fix:** If you want to match traffic from any of these countries, use an `OrStatement` instead:
+
+```yaml
+    Statement:
+      OrStatement:
+        Statements:
+          - GeoMatchStatement:
+              CountryCodes: ["US", "CA"]
+          - GeoMatchStatement:
+              CountryCodes: ["DE", "FR"]
+```
+
+Or combine the country codes into a single `GeoMatchStatement`:
+
+```yaml
+    Statement:
+      GeoMatchStatement:
+        CountryCodes: ["US", "CA", "DE", "FR"]
+```
+
+### WA343 -- Always-false pattern (SizeConstraint size < 0 is impossible)
+
+**Severity:** WARNING
+
+A `SizeConstraintStatement` with `Size: 0` and `ComparisonOperator: LT` is always false because the size of a request component cannot be negative.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      SizeConstraintStatement:
+        FieldToMatch:
+          Body: {}
+        ComparisonOperator: LT
+        Size: 0
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Use `EQ` to match empty values, or `GT` to match non-empty values:
+
+```yaml
+        ComparisonOperator: EQ    # matches empty body
+        Size: 0
+```
 
 ---
 

@@ -347,3 +347,297 @@ class TestDuplicateStatement:
         aws_lint(rules_data, ctx)
         wa520 = [r for r in ctx.results if r.rule_id == "WA520"]
         assert len(wa520) == 0
+
+
+class TestWcuCapacity:
+    """WA340: Estimated total WCU exceeds Web ACL limit."""
+
+    def _make_rule(self, ref, priority, metric, statement):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {"Block": {}},
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": metric,
+            },
+            "Statement": statement,
+        }
+
+    def test_wa340_under_limit_no_warn(self):
+        """A few simple rules should not trigger WA340."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._make_rule("r1", 1, "m1", {"GeoMatchStatement": {"CountryCodes": ["US"]}}),
+                self._make_rule("r2", 2, "m2", {"GeoMatchStatement": {"CountryCodes": ["DE"]}}),
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
+        assert len(wa340) == 0
+
+    def test_wa340_exceeds_limit(self):
+        """Many managed rule groups should exceed WCU limit."""
+        ctx = LintContext()
+        # Each ManagedRuleGroupStatement estimates 100 WCU + 1 rule base = 101.
+        # 16 of them = 1616 WCU > 1500
+        rules = []
+        for i in range(16):
+            rules.append(
+                self._make_rule(
+                    f"r{i}",
+                    i,
+                    f"m{i}",
+                    {
+                        "ManagedRuleGroupStatement": {
+                            "VendorName": "AWS",
+                            "Name": f"RuleSet{i}",
+                        }
+                    },
+                )
+            )
+        rules_data = {"aws_waf_managed_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
+        assert len(wa340) == 1
+        assert "1500" in wa340[0].message
+
+    def test_wa340_exactly_at_limit_no_warn(self):
+        """WCU exactly at 1500 should NOT trigger WA340."""
+        ctx = LintContext()
+        # Each GeoMatch rule = 1 (rule base) + 2 (statement) = 3 WCU.
+        # 500 rules * 3 = 1500 WCU exactly.
+        rules = []
+        for i in range(500):
+            rules.append(
+                self._make_rule(
+                    f"r{i}",
+                    i,
+                    f"m{i}",
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                )
+            )
+        rules_data = {"aws_waf_custom_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
+        assert len(wa340) == 0
+
+    def test_wa340_cross_phase_sum(self):
+        """WCU is summed across all AWS phases."""
+        ctx = LintContext()
+        # 8 managed rule groups per phase * 2 phases = 16 * 101 = 1616 WCU
+        rules_per_phase = []
+        for i in range(8):
+            rules_per_phase.append(
+                self._make_rule(
+                    f"r{i}",
+                    i,
+                    f"m{i}",
+                    {
+                        "ManagedRuleGroupStatement": {
+                            "VendorName": "AWS",
+                            "Name": f"RuleSet{i}",
+                        }
+                    },
+                )
+            )
+        rules_per_phase2 = []
+        for i in range(8, 16):
+            rules_per_phase2.append(
+                self._make_rule(
+                    f"r{i}",
+                    i,
+                    f"m{i}",
+                    {
+                        "ManagedRuleGroupStatement": {
+                            "VendorName": "AWS",
+                            "Name": f"RuleSet{i}",
+                        }
+                    },
+                )
+            )
+        rules_data = {
+            "aws_waf_managed_rules": rules_per_phase,
+            "aws_waf_custom_rules": rules_per_phase2,
+        }
+        aws_lint(rules_data, ctx)
+        wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
+        assert len(wa340) == 1
+
+    def test_wa340_respects_phase_filter(self):
+        """WA340 should respect ctx.phase_filter."""
+        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        # Put expensive rules in managed_rules (filtered out)
+        rules = []
+        for i in range(16):
+            rules.append(
+                self._make_rule(
+                    f"r{i}",
+                    i,
+                    f"m{i}",
+                    {
+                        "ManagedRuleGroupStatement": {
+                            "VendorName": "AWS",
+                            "Name": f"RuleSet{i}",
+                        }
+                    },
+                )
+            )
+        rules_data = {"aws_waf_managed_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
+        assert len(wa340) == 0
+
+
+class TestIpSetReferences:
+    """WA326: IPSetReferenceStatement references IP Set not in lists section."""
+
+    # Short ARN helpers to stay under line-length limit
+    _BLOCKED = "arn:aws:wafv2:us-east-1:123:regional/ipset/blocked-ips/a1"
+    _EXTERNAL = "arn:aws:wafv2:us-east-1:123:regional/ipset/external-set/b2"
+    _REGEX = "arn:aws:wafv2:us-east-1:123:regional/regexpatternset/my-patterns/c3"
+
+    def _make_rule(self, ref, priority, metric, statement):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {"Block": {}},
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": metric,
+            },
+            "Statement": statement,
+        }
+
+    def test_wa326_ipset_not_in_lists(self):
+        """IPSet ARN name not in lists section triggers WA326."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "allowed-ips", "kind": "ip", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {"IPSetReferenceStatement": {"ARN": self._BLOCKED}},
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 1
+        assert "blocked-ips" in wa326[0].message
+
+    def test_wa326_ipset_in_lists_no_warn(self):
+        """IPSet ARN name matching a list does NOT trigger WA326."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "blocked-ips", "kind": "ip", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {"IPSetReferenceStatement": {"ARN": self._BLOCKED}},
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 0
+
+    def test_wa326_no_lists_section_no_warn(self):
+        """Without a lists section, WA326 does not fire."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {"IPSetReferenceStatement": {"ARN": self._BLOCKED}},
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 0
+
+    def test_wa326_nested_ipset_in_and(self):
+        """IPSet inside AndStatement is still checked."""
+        ctx = LintContext()
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "IPSetReferenceStatement": {
+                            "ARN": self._EXTERNAL,
+                        }
+                    },
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                ]
+            }
+        }
+        rules_data = {
+            "lists": [
+                {"name": "allowed-ips", "kind": "ip", "items": []},
+            ],
+            "aws_waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 1
+        assert "external-set" in wa326[0].message
+
+    def test_wa326_non_ipset_arn_ignored(self):
+        """ARNs for non-ipset resources are not checked by WA326."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "allowed-ips", "kind": "ip", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [
+                                {"Priority": 0, "Type": "NONE"},
+                            ],
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 0
+
+    def test_wa326_empty_lists_section_no_warn(self):
+        """Empty lists section = no names to compare, no WA326."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {"IPSetReferenceStatement": {"ARN": self._BLOCKED}},
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
+        assert len(wa326) == 0

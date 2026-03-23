@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
@@ -29,6 +30,13 @@ _AUTH_ERROR_CODES = frozenset(
 # Maximum retry attempts for WAFOptimisticLockException (stale LockToken).
 _LOCK_RETRIES = 3
 
+# Default VisibilityConfig for newly created Rule Groups.
+_DEFAULT_VISIBILITY_CONFIG = {
+    "SampledRequestsEnabled": True,
+    "CloudWatchMetricsEnabled": True,
+    "MetricName": "",  # will be set per-call
+}
+
 # Phase identifiers registered by this provider.
 _AWS_PHASE_IDS = frozenset(
     {
@@ -40,7 +48,7 @@ _AWS_PHASE_IDS = frozenset(
 )
 
 
-def _classify_client_error(e):
+def _classify_client_error(e: Exception) -> type[ProviderAuthError] | None:
     """Check boto3 ClientError code to determine if it's an auth error."""
     if isinstance(e, ClientError):
         code = e.response.get("Error", {}).get("Code", "")
@@ -152,11 +160,11 @@ class AwsWafProvider:
         max_retries: int = 2,
         timeout: float | None = None,
         max_workers: int = 1,
-        client=None,
+        client: object = None,
         region: str | None = None,
         waf_scope: str | None = None,
         **_extra: object,
-    ):
+    ) -> None:
         self._waf_scope = waf_scope or os.environ.get("AWS_WAF_SCOPE", "REGIONAL")
         if self._waf_scope not in ("REGIONAL", "CLOUDFRONT"):
             raise ConfigError(
@@ -233,6 +241,30 @@ class AwsWafProvider:
         )
         return response["WebACL"], response["LockToken"]
 
+    def _with_lock_retry(self, operation: object, label: str) -> object:
+        """Run *operation()* with optimistic-lock retry and linear backoff.
+
+        Retries up to ``_LOCK_RETRIES`` times on
+        ``WAFOptimisticLockException``, sleeping ``0.5s * attempt`` between
+        retries so concurrent writers have time to settle.
+        """
+        for attempt in range(_LOCK_RETRIES):
+            try:
+                return operation()
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
+                    delay = 0.5 * (attempt + 1)
+                    log.debug(
+                        "Stale LockToken for %s, retrying in %.1fs",
+                        label,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+
     # -- Zone resolution --
 
     @_wrap_provider_errors
@@ -288,34 +320,21 @@ class AwsWafProvider:
         with self._lock:
             meta = self._web_acl_meta[scope.zone_id]
 
-        for attempt in range(_LOCK_RETRIES):
+        def _op() -> int:
             acl, lock_token = self._get_web_acl(scope)
             other_rules = [r for r in acl.get("Rules", []) if _classify_phase(r) != provider_id]
-            try:
-                self._client.update_web_acl(
-                    Name=meta["Name"],
-                    Scope=self._waf_scope,
-                    Id=scope.zone_id,
-                    DefaultAction=acl["DefaultAction"],
-                    Rules=other_rules + new_rules,
-                    VisibilityConfig=acl["VisibilityConfig"],
-                    LockToken=lock_token,
-                )
-                return len(new_rules)
-            except ClientError as e:
-                code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    log.debug(
-                        "Stale LockToken for %s, retrying (%d/%d)",
-                        scope.zone_id,
-                        attempt + 1,
-                        _LOCK_RETRIES,
-                    )
-                    continue
-                raise
+            self._client.update_web_acl(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=scope.zone_id,
+                DefaultAction=acl["DefaultAction"],
+                Rules=other_rules + new_rules,
+                VisibilityConfig=acl["VisibilityConfig"],
+                LockToken=lock_token,
+            )
+            return len(new_rules)
 
-        # Unreachable, but satisfies type checker
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+        return self._with_lock_retry(_op, f"WebACL {scope.zone_id}")
 
     @_wrap_provider_errors
     def get_all_phase_rules(
@@ -380,30 +399,58 @@ class AwsWafProvider:
         rg_meta = self._find_rule_group(ruleset_id)
         new_rules = [_denormalize_rule(r) for r in rules]
 
-        for attempt in range(_LOCK_RETRIES):
+        def _op() -> int:
             response = self._client.get_rule_group(
                 Name=rg_meta["Name"],
                 Scope=self._waf_scope,
                 Id=ruleset_id,
             )
-            try:
-                self._client.update_rule_group(
-                    Name=rg_meta["Name"],
-                    Scope=self._waf_scope,
-                    Id=ruleset_id,
-                    Rules=new_rules,
-                    VisibilityConfig=response["RuleGroup"]["VisibilityConfig"],
-                    LockToken=response["LockToken"],
-                )
-                return len(rules)
-            except ClientError as e:
-                code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    log.debug("Stale LockToken for RuleGroup %s, retrying", ruleset_id)
-                    continue
-                raise
+            self._client.update_rule_group(
+                Name=rg_meta["Name"],
+                Scope=self._waf_scope,
+                Id=ruleset_id,
+                Rules=new_rules,
+                VisibilityConfig=response["RuleGroup"]["VisibilityConfig"],
+                LockToken=response["LockToken"],
+            )
+            return len(rules)
 
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+        return self._with_lock_retry(_op, f"RuleGroup {ruleset_id}")
+
+    @_wrap_provider_errors
+    def create_custom_ruleset(
+        self, scope: Scope, name: str, phase: str, capacity: int, description: str = ""
+    ) -> dict:
+        """Create a new Rule Group."""
+        vis = {**_DEFAULT_VISIBILITY_CONFIG, "MetricName": name}
+        response = self._client.create_rule_group(
+            Name=name,
+            Scope=self._waf_scope,
+            Capacity=capacity,
+            Description=description,
+            Rules=[],
+            VisibilityConfig=vis,
+        )
+        summary = response.get("Summary", {})
+        return {"id": summary.get("Id", ""), "name": summary.get("Name", "")}
+
+    @_wrap_provider_errors
+    def delete_custom_ruleset(self, scope: Scope, ruleset_id: str) -> None:
+        """Delete a Rule Group. Retries on stale LockToken."""
+        rg_meta = self._find_rule_group(ruleset_id)
+
+        def _op() -> None:
+            response = self._client.get_rule_group(
+                Name=rg_meta["Name"], Scope=self._waf_scope, Id=ruleset_id
+            )
+            self._client.delete_rule_group(
+                Name=rg_meta["Name"],
+                Scope=self._waf_scope,
+                Id=ruleset_id,
+                LockToken=response["LockToken"],
+            )
+
+        self._with_lock_retry(_op, f"RuleGroup {ruleset_id} delete")
 
     @_wrap_provider_errors
     def get_all_custom_rulesets(
@@ -495,23 +542,17 @@ class AwsWafProvider:
     def delete_list(self, scope: Scope, list_id: str) -> None:
         """Delete an IP Set. Retries on stale LockToken."""
         meta = self._find_ip_set(list_id)
-        for attempt in range(_LOCK_RETRIES):
+
+        def _op() -> None:
             response = self._client.get_ip_set(Name=meta["Name"], Scope=self._waf_scope, Id=list_id)
-            try:
-                self._client.delete_ip_set(
-                    Name=meta["Name"],
-                    Scope=self._waf_scope,
-                    Id=list_id,
-                    LockToken=response["LockToken"],
-                )
-                return
-            except ClientError as e:
-                code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    log.debug("Stale LockToken for IPSet %s delete, retrying", list_id)
-                    continue
-                raise
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+            self._client.delete_ip_set(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=list_id,
+                LockToken=response["LockToken"],
+            )
+
+        self._with_lock_retry(_op, f"IPSet {list_id} delete")
 
     @_wrap_provider_errors
     def update_list_description(self, scope: Scope, list_id: str, description: str) -> None:
@@ -521,25 +562,19 @@ class AwsWafProvider:
         ``update_ip_set`` call is required, preserving existing addresses.
         """
         meta = self._find_ip_set(list_id)
-        for attempt in range(_LOCK_RETRIES):
+
+        def _op() -> None:
             response = self._client.get_ip_set(Name=meta["Name"], Scope=self._waf_scope, Id=list_id)
-            try:
-                self._client.update_ip_set(
-                    Name=meta["Name"],
-                    Scope=self._waf_scope,
-                    Id=list_id,
-                    Addresses=response["IPSet"].get("Addresses", []),
-                    Description=description,
-                    LockToken=response["LockToken"],
-                )
-                return
-            except ClientError as e:
-                code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    log.debug("Stale LockToken for IPSet %s description, retrying", list_id)
-                    continue
-                raise
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+            self._client.update_ip_set(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=list_id,
+                Addresses=response["IPSet"].get("Addresses", []),
+                Description=description,
+                LockToken=response["LockToken"],
+            )
+
+        self._with_lock_retry(_op, f"IPSet {list_id} description")
 
     @_wrap_provider_errors
     def get_list_items(
@@ -567,25 +602,18 @@ class AwsWafProvider:
             else:
                 raise ProviderError(f"List item {i} missing 'ip' or 'value' key")
 
-        for attempt in range(_LOCK_RETRIES):
+        def _op() -> str:
             response = self._client.get_ip_set(Name=meta["Name"], Scope=self._waf_scope, Id=list_id)
-            try:
-                self._client.update_ip_set(
-                    Name=meta["Name"],
-                    Scope=self._waf_scope,
-                    Id=list_id,
-                    Addresses=addresses,
-                    LockToken=response["LockToken"],
-                )
-                return f"aws-sync-{list_id}"
-            except ClientError as e:
-                code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    log.debug("Stale LockToken for IPSet %s, retrying", list_id)
-                    continue
-                raise
+            self._client.update_ip_set(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=list_id,
+                Addresses=addresses,
+                LockToken=response["LockToken"],
+            )
+            return f"aws-sync-{list_id}"
 
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+        return self._with_lock_retry(_op, f"IPSet {list_id}")
 
     @_wrap_provider_errors
     def poll_bulk_operation(

@@ -698,6 +698,128 @@ class TestPhaseRegistration:
         assert rg_phase.provider_id == "aws_waf_rule_group"
 
 
+class TestAuthErrors:
+    """Auth-related errors are wrapped as ProviderAuthError."""
+
+    def _setup_provider(self, mock_waf_client, web_acl):
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": web_acl,
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.resolve_zone_id("my-acl")
+        return provider
+
+    def test_get_phase_rules_auth_error(self, mock_waf_client, web_acl):
+        """AccessDeniedException during get_phase_rules → ProviderAuthError."""
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.get_web_acl.side_effect = _make_client_error("AccessDeniedException")
+        with pytest.raises(ProviderAuthError, match="AccessDeniedException"):
+            provider.get_phase_rules(_zs(), "aws_waf_custom")
+
+    def test_put_phase_rules_auth_error(self, mock_waf_client, web_acl):
+        """AccessDeniedException during put_phase_rules → ProviderAuthError."""
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.get_web_acl.side_effect = _make_client_error("AccessDeniedException")
+        with pytest.raises(ProviderAuthError, match="AccessDeniedException"):
+            provider.put_phase_rules(_zs(), "aws_waf_custom", [])
+
+    def test_no_credentials_error(self, mock_waf_client):
+        """NoCredentialsError → ProviderAuthError regardless of which method is called."""
+        mock_waf_client.list_web_acls.side_effect = NoCredentialsError()
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.list_zones()
+
+
+class TestConnectionErrors:
+    """Connection-related errors are wrapped as ProviderConnectionError."""
+
+    def _setup_provider(self, mock_waf_client, web_acl):
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": web_acl,
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.resolve_zone_id("my-acl")
+        return provider
+
+    def test_get_phase_rules_connection_error(self, mock_waf_client, web_acl):
+        """EndpointConnectionError during get_phase_rules → ProviderConnectionError."""
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.get_web_acl.side_effect = EndpointConnectionError(
+            endpoint_url="https://wafv2.us-east-1.amazonaws.com"
+        )
+        with pytest.raises(ProviderConnectionError):
+            provider.get_phase_rules(_zs(), "aws_waf_custom")
+
+    def test_connection_error_wraps(self, mock_waf_client):
+        """Plain ConnectionError → ProviderConnectionError."""
+        mock_waf_client.list_web_acls.side_effect = ConnectionError("Connection refused")
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderConnectionError, match="Connection refused"):
+            provider.resolve_zone_id("my-acl")
+
+
+class TestLockRetry:
+    """WAFOptimisticLockException retry behavior."""
+
+    def _setup_provider(self, mock_waf_client, web_acl):
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": web_acl,
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.resolve_zone_id("my-acl")
+        return provider
+
+    def test_lock_retry_succeeds_on_second_attempt(self, mock_waf_client, web_acl):
+        """First attempt hits WAFOptimisticLockException, second succeeds."""
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.update_web_acl.side_effect = [
+            _make_client_error("WAFOptimisticLockException"),
+            None,
+        ]
+        count = provider.put_phase_rules(_zs(), "aws_waf_custom", [])
+        assert count == 0
+        assert mock_waf_client.update_web_acl.call_count == 2
+        # Re-fetches the Web ACL on retry to get fresh LockToken
+        assert mock_waf_client.get_web_acl.call_count == 2
+
+    def test_lock_retry_exhausted(self, mock_waf_client, web_acl):
+        """All 3 attempts hit WAFOptimisticLockException → raises ProviderError."""
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.update_web_acl.side_effect = _make_client_error(
+            "WAFOptimisticLockException"
+        )
+        with pytest.raises(ProviderError, match="WAFOptimisticLockException"):
+            provider.put_phase_rules(_zs(), "aws_waf_custom", [])
+        # All 3 retry attempts exhausted
+        assert mock_waf_client.update_web_acl.call_count == 3
+
+
+class TestGenericErrors:
+    """Non-auth ClientErrors are wrapped as ProviderError (not ProviderAuthError)."""
+
+    def test_client_error_non_auth_code(self, mock_waf_client):
+        """ThrottlingException → ProviderError, not ProviderAuthError."""
+        mock_waf_client.list_web_acls.side_effect = _make_client_error("ThrottlingException")
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="ThrottlingException") as exc_info:
+            provider.resolve_zone_id("my-acl")
+        # Must NOT be a ProviderAuthError subclass
+        assert type(exc_info.value) is ProviderError
+
+
 class TestSupports:
     def test_supports_custom_rulesets_and_lists(self):
         assert "custom_rulesets" in AwsWafProvider.SUPPORTS
@@ -718,3 +840,219 @@ class TestSupports:
         assert provider_supports(prov, SUPPORTS_CUSTOM_RULESETS)
         assert provider_supports(prov, SUPPORTS_LISTS)
         assert provider_supports(prov, SUPPORTS_ZONE_DISCOVERY)
+
+
+class TestMalformedResponses:
+    """Provider handles malformed or incomplete API responses gracefully."""
+
+    def _setup(self, mock_waf_client, acl):
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": acl,
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.resolve_zone_id("my-acl")
+        return provider
+
+    def test_get_phase_rules_empty_rules_list(self, mock_waf_client):
+        """Provider handles empty Rules list in Web ACL response."""
+        acl = {
+            "Name": "empty",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        assert provider.get_phase_rules(_zs(), "aws_waf_custom") == []
+        assert provider.get_phase_rules(_zs(), "aws_waf_rate") == []
+        assert provider.get_phase_rules(_zs(), "aws_waf_managed") == []
+        assert provider.get_phase_rules(_zs(), "aws_waf_rule_group") == []
+
+    def test_get_phase_rules_missing_rules_key(self, mock_waf_client):
+        """Provider handles Web ACL response with no Rules key at all."""
+        acl = {
+            "Name": "no-rules",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+        }
+        provider = self._setup(mock_waf_client, acl)
+        assert provider.get_phase_rules(_zs(), "aws_waf_custom") == []
+
+    def test_get_phase_rules_rule_missing_name(self, mock_waf_client):
+        """Rules without Name field don't crash the provider."""
+        acl = {
+            "Name": "bad-rules",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [
+                {
+                    # No "Name" key
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "Statement": {"GeoMatchStatement": {"CountryCodes": ["XX"]}},
+                    "VisibilityConfig": {},
+                },
+            ],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        rules = provider.get_phase_rules(_zs(), "aws_waf_custom")
+        assert len(rules) == 1
+        # _normalize_rule uses .pop("Name", "") so missing Name -> empty ref
+        assert rules[0]["ref"] == ""
+
+    def test_get_phase_rules_rule_missing_statement(self, mock_waf_client):
+        """Rules without Statement field classify as custom and don't crash."""
+        acl = {
+            "Name": "no-stmt",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [
+                {
+                    "Name": "bare-rule",
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "VisibilityConfig": {},
+                    # No "Statement" key
+                },
+            ],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        # Missing Statement -> _classify_phase falls through to "aws_waf_custom"
+        rules = provider.get_phase_rules(_zs(), "aws_waf_custom")
+        assert len(rules) == 1
+        assert rules[0]["ref"] == "bare-rule"
+
+    def test_get_all_phase_rules_empty_acl(self, mock_waf_client):
+        """get_all_phase_rules returns empty result for an ACL with no rules."""
+        acl = {
+            "Name": "empty",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        result = provider.get_all_phase_rules(_zs())
+        assert dict(result) == {}
+        assert result.failed_phases == []
+
+    def test_get_all_phase_rules_missing_rules_key(self, mock_waf_client):
+        """get_all_phase_rules handles ACL with no Rules key."""
+        acl = {
+            "Name": "no-rules",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+        }
+        provider = self._setup(mock_waf_client, acl)
+        result = provider.get_all_phase_rules(_zs())
+        assert dict(result) == {}
+        assert result.failed_phases == []
+
+    def test_list_rule_groups_empty(self, mock_waf_client):
+        """Empty rule group list returns empty dict."""
+        mock_waf_client.list_rule_groups.return_value = {"RuleGroups": []}
+        provider = AwsWafProvider(client=mock_waf_client)
+        assert provider.get_all_custom_rulesets(_zs()) == {}
+
+    def test_list_rule_groups_missing_key(self, mock_waf_client):
+        """Response with no RuleGroups key returns empty list."""
+        mock_waf_client.list_rule_groups.return_value = {}
+        provider = AwsWafProvider(client=mock_waf_client)
+        # _paginate_list uses .get("RuleGroups", []) so this should be empty
+        result = provider.list_custom_rulesets(_zs())
+        assert result == []
+
+    def test_get_custom_ruleset_empty_rules(self, mock_waf_client):
+        """Rule Group with empty Rules list returns empty list."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "empty-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"Rules": [], "VisibilityConfig": {}},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        rules = provider.get_custom_ruleset(_zs(), "rg-1")
+        assert rules == []
+
+    def test_get_custom_ruleset_missing_rules_key(self, mock_waf_client):
+        """Rule Group response with no Rules key returns empty list."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "no-rules-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"VisibilityConfig": {}},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        rules = provider.get_custom_ruleset(_zs(), "rg-1")
+        assert rules == []
+
+    def test_list_ip_sets_empty(self, mock_waf_client):
+        """Empty IP set list returns empty list."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.list_lists(_zs())
+        assert result == []
+
+    def test_get_list_items_empty_addresses(self, mock_waf_client):
+        """IP Set with empty Addresses returns empty list."""
+        mock_waf_client.list_ip_sets.return_value = {
+            "IPSets": [{"Id": "ip-1", "Name": "empty-set"}]
+        }
+        mock_waf_client.get_ip_set.return_value = {
+            "IPSet": {"Addresses": []},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        items = provider.get_list_items(_zs(), "ip-1")
+        assert items == []
+
+    def test_get_list_items_missing_addresses_key(self, mock_waf_client):
+        """IP Set response with no Addresses key returns empty list."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": [{"Id": "ip-1", "Name": "no-addrs"}]}
+        mock_waf_client.get_ip_set.return_value = {
+            "IPSet": {},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        items = provider.get_list_items(_zs(), "ip-1")
+        assert items == []
+
+    def test_decode_bytes_in_rule(self, mock_waf_client):
+        """Rules with bytes SearchString are decoded to str."""
+        acl = {
+            "Name": "bytes-acl",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [
+                {
+                    "Name": "byte-match",
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "Statement": {
+                        "ByteMatchStatement": {
+                            "SearchString": b"bad-bot",
+                            "FieldToMatch": {"UriPath": {}},
+                            "PositionalConstraint": "CONTAINS",
+                        }
+                    },
+                    "VisibilityConfig": {},
+                },
+            ],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        rules = provider.get_phase_rules(_zs(), "aws_waf_custom")
+        assert len(rules) == 1
+        search_str = rules[0]["Statement"]["ByteMatchStatement"]["SearchString"]
+        assert isinstance(search_str, str)
+        assert search_str == "bad-bot"

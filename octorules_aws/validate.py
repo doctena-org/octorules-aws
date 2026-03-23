@@ -41,6 +41,13 @@ _VISIBILITY_FIELDS: dict[str, type] = {
 
 _VALID_AGGREGATE_KEY_TYPES = frozenset({"IP", "FORWARDED_IP", "CUSTOM_KEYS", "CONSTANT"})
 _MAX_RATE_LIMIT = 2_000_000_000
+_MAX_CUSTOM_KEYS = 5
+_MAX_TEXT_TRANSFORMATIONS = 10
+_MAX_MATCH_PATTERN_ENTRIES = 5
+
+# --- WA335/WA336: JsonBody enum values ----------------------------------------
+_VALID_MATCH_SCOPES = frozenset({"ALL", "KEY", "VALUE"})
+_VALID_INVALID_FALLBACK_BEHAVIORS = frozenset({"MATCH", "NO_MATCH", "EVALUATE_AS_STRING"})
 
 _BYTE_MATCH_REQUIRED = (
     "FieldToMatch",
@@ -49,6 +56,7 @@ _BYTE_MATCH_REQUIRED = (
     "SearchString",
 )
 _COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
+_MAX_GEO_COUNTRY_CODES = 25
 
 # --- WA020: Valid top-level rule fields ------------------------------------
 _VALID_RULE_FIELDS = frozenset(
@@ -133,6 +141,23 @@ _VALID_TEXT_TRANSFORM_TYPES = frozenset(
         "BASE64_DECODE_EXT",
         "URL_DECODE_UNI",
         "UTF8_TO_UNICODE",
+    }
+)
+
+# --- WA307/WA308: Size limits -----------------------------------------------
+_MAX_SEARCH_STRING_BYTES = 8192
+_MAX_REGEX_STRING_BYTES = 512
+
+# --- WA320: FieldToMatch types that inspect request content -----------------
+# Only statement types that inspect request content can use JsonBody.
+_JSONBODY_STATEMENT_TYPES = frozenset(
+    {
+        "ByteMatchStatement",
+        "RegexMatchStatement",
+        "RegexPatternSetReferenceStatement",
+        "SizeConstraintStatement",
+        "SqliMatchStatement",
+        "XssMatchStatement",
     }
 )
 
@@ -600,6 +625,9 @@ def _validate_statement(
     # Deep validation (WA314–WA318)
     _check_statement_fields(stmt, results, phase, ref)
 
+    # Heuristic patterns (WA341–WA343) — non-recursive, has own recursion
+    _check_heuristic_patterns(stmt, results, phase, ref)
+
     # Recurse into compound statements
     if "AndStatement" in stmt:
         _check_compound(stmt["AndStatement"], "AndStatement", results, phase, ref)
@@ -683,6 +711,20 @@ def _check_rate_based(
                 )
             )
 
+    # WA309: RateBasedStatement without ScopeDownStatement
+    if "ScopeDownStatement" not in rbs:
+        results.append(
+            LintResult(
+                rule_id="WA309",
+                severity=Severity.WARNING,
+                message="RateBasedStatement without ScopeDownStatement rate-limits all traffic",
+                phase=phase,
+                ref=ref,
+                field="Statement.RateBasedStatement.ScopeDownStatement",
+                suggestion="Add a ScopeDownStatement to limit which requests are counted",
+            )
+        )
+
     # Recurse into ScopeDownStatement
     sds = rbs.get("ScopeDownStatement")
     if isinstance(sds, dict):
@@ -695,7 +737,7 @@ def _check_byte_match(
     phase: str,
     ref: str,
 ) -> None:
-    """WA312 — ByteMatchStatement required fields."""
+    """WA312/WA307 — ByteMatchStatement required fields and size limits."""
     if not isinstance(bms, dict):
         return
     for field in _BYTE_MATCH_REQUIRED:
@@ -711,6 +753,25 @@ def _check_byte_match(
                 )
             )
 
+    # WA307: SearchString size limit
+    search_string = bms.get("SearchString")
+    if isinstance(search_string, str):
+        byte_len = len(search_string.encode("utf-8"))
+        if byte_len > _MAX_SEARCH_STRING_BYTES:
+            results.append(
+                LintResult(
+                    rule_id="WA307",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"SearchString exceeds {_MAX_SEARCH_STRING_BYTES}-byte"
+                        f" AWS WAF limit ({byte_len} bytes)"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.ByteMatchStatement.SearchString",
+                )
+            )
+
 
 def _check_geo_match(
     gms: object,
@@ -718,10 +779,28 @@ def _check_geo_match(
     phase: str,
     ref: str,
 ) -> None:
-    """WA313 — GeoMatchStatement country code format."""
+    """WA313/WA323 — GeoMatchStatement country code format and count."""
     if not isinstance(gms, dict):
         return
-    for code in gms.get("CountryCodes", []):
+    codes = gms.get("CountryCodes", [])
+
+    # WA323: CountryCodes list length
+    if isinstance(codes, list) and len(codes) > _MAX_GEO_COUNTRY_CODES:
+        results.append(
+            LintResult(
+                rule_id="WA323",
+                severity=Severity.ERROR,
+                message=(
+                    f"GeoMatchStatement exceeds maximum of {_MAX_GEO_COUNTRY_CODES}"
+                    f" country codes (got {len(codes)})"
+                ),
+                phase=phase,
+                ref=ref,
+                field="Statement.GeoMatchStatement.CountryCodes",
+            )
+        )
+
+    for code in codes:
         if not isinstance(code, str) or not _COUNTRY_CODE_RE.fullmatch(code):
             results.append(
                 LintResult(
@@ -783,6 +862,40 @@ def _check_statement_fields(
                             suggestion="Fix the regex syntax",
                         )
                     )
+
+                # WA308: RegexString size limit
+                byte_len = len(regex_str.encode("utf-8"))
+                if byte_len > _MAX_REGEX_STRING_BYTES:
+                    results.append(
+                        LintResult(
+                            rule_id="WA308",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"RegexString exceeds {_MAX_REGEX_STRING_BYTES}-byte"
+                                f" AWS WAF limit ({byte_len} bytes)"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field="Statement.RegexMatchStatement.RegexString",
+                        )
+                    )
+
+        # WA334: SizeConstraintStatement.Size must be non-negative
+        if stype == "SizeConstraintStatement" and "Size" in inner:
+            size_val = inner["Size"]
+            if isinstance(size_val, int) and not isinstance(size_val, bool) and size_val < 0:
+                results.append(
+                    LintResult(
+                        rule_id="WA334",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"SizeConstraintStatement.Size must be non-negative (got {size_val})"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field=f"Statement.{stype}.Size",
+                    )
+                )
 
         # WA315: Enum validation
         _check_statement_enums(stype, inner, results, phase, ref)
@@ -934,6 +1047,39 @@ def _check_field_to_match(
                 )
             )
 
+    # WA325: Headers/Cookies MatchPattern limit
+    for ftm_key in ("Headers", "Cookies"):
+        if ftm_key in ftm:
+            container = ftm[ftm_key]
+            if isinstance(container, dict):
+                mp = container.get("MatchPattern")
+                if isinstance(mp, dict):
+                    for pat_key in (
+                        "IncludedHeaders",
+                        "ExcludedHeaders",
+                        "IncludedCookies",
+                        "ExcludedCookies",
+                    ):
+                        pat_list = mp.get(pat_key)
+                        if (
+                            isinstance(pat_list, list)
+                            and len(pat_list) > _MAX_MATCH_PATTERN_ENTRIES
+                        ):
+                            results.append(
+                                LintResult(
+                                    rule_id="WA325",
+                                    severity=Severity.ERROR,
+                                    message=(
+                                        f"FieldToMatch {ftm_key} MatchPattern.{pat_key}"
+                                        f" exceeds maximum of {_MAX_MATCH_PATTERN_ENTRIES}"
+                                        f" patterns (got {len(pat_list)})"
+                                    ),
+                                    phase=phase,
+                                    ref=ref,
+                                    field=f"{field_prefix}.{ftm_key}.MatchPattern.{pat_key}",
+                                )
+                            )
+
     if "JsonBody" in ftm:
         jb = ftm["JsonBody"]
         if isinstance(jb, dict):
@@ -949,6 +1095,57 @@ def _check_field_to_match(
                             field=f"{field_prefix}.JsonBody.{required_field}",
                         )
                     )
+
+            # WA335: JsonBody.MatchScope validation
+            ms = jb.get("MatchScope")
+            if isinstance(ms, str) and ms not in _VALID_MATCH_SCOPES:
+                results.append(
+                    LintResult(
+                        rule_id="WA335",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"JsonBody.MatchScope must be one of:"
+                            f" {', '.join(sorted(_VALID_MATCH_SCOPES))} (got {ms!r})"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field=f"{field_prefix}.JsonBody.MatchScope",
+                        suggestion=f"Valid values: {sorted(_VALID_MATCH_SCOPES)}",
+                    )
+                )
+
+            # WA336: JsonBody.InvalidFallbackBehavior validation
+            ifb = jb.get("InvalidFallbackBehavior")
+            if isinstance(ifb, str) and ifb not in _VALID_INVALID_FALLBACK_BEHAVIORS:
+                results.append(
+                    LintResult(
+                        rule_id="WA336",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"JsonBody.InvalidFallbackBehavior must be one of:"
+                            f" {', '.join(sorted(_VALID_INVALID_FALLBACK_BEHAVIORS))}"
+                            f" (got {ifb!r})"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field=f"{field_prefix}.JsonBody.InvalidFallbackBehavior",
+                        suggestion=f"Valid values: {sorted(_VALID_INVALID_FALLBACK_BEHAVIORS)}",
+                    )
+                )
+
+    # WA320: FieldToMatch type incompatible with statement type
+    if "JsonBody" in ftm and stype not in _JSONBODY_STATEMENT_TYPES:
+        results.append(
+            LintResult(
+                rule_id="WA320",
+                severity=Severity.WARNING,
+                message=f"FieldToMatch type 'JsonBody' is not applicable to {stype}",
+                phase=phase,
+                ref=ref,
+                field=field_prefix,
+                suggestion=(f"JsonBody is only applicable to: {sorted(_JSONBODY_STATEMENT_TYPES)}"),
+            )
+        )
 
 
 def _check_text_transformations(
@@ -986,6 +1183,42 @@ def _check_text_transformations(
             )
         )
         return
+
+    # WA331: TextTransformations count limit
+    if len(tt) > _MAX_TEXT_TRANSFORMATIONS:
+        results.append(
+            LintResult(
+                rule_id="WA331",
+                severity=Severity.ERROR,
+                message=(
+                    f"TextTransformations exceeds maximum of"
+                    f" {_MAX_TEXT_TRANSFORMATIONS} per statement (got {len(tt)})"
+                ),
+                phase=phase,
+                ref=ref,
+                field=field_prefix,
+            )
+        )
+
+    # WA332: Duplicate TextTransformation Priority
+    seen_priorities: dict[int, int] = {}
+    for i, elem in enumerate(tt):
+        if isinstance(elem, dict):
+            pri = elem.get("Priority")
+            if isinstance(pri, int) and not isinstance(pri, bool):
+                if pri in seen_priorities:
+                    results.append(
+                        LintResult(
+                            rule_id="WA332",
+                            severity=Severity.ERROR,
+                            message=f"Duplicate TextTransformation Priority {pri}",
+                            phase=phase,
+                            ref=ref,
+                            field=f"{field_prefix}[{i}].Priority",
+                        )
+                    )
+                else:
+                    seen_priorities[pri] = i
 
     for i, elem in enumerate(tt):
         if not isinstance(elem, dict):
@@ -1083,6 +1316,20 @@ def _check_rate_based_conditional(
                     message=(
                         "RateBasedStatement with AggregateKeyType=CUSTOM_KEYS"
                         " requires non-empty 'CustomKeys' list"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.RateBasedStatement.CustomKeys",
+                )
+            )
+        elif isinstance(custom_keys, list) and len(custom_keys) > _MAX_CUSTOM_KEYS:
+            results.append(
+                LintResult(
+                    rule_id="WA324",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"RateBasedStatement.CustomKeys exceeds maximum"
+                        f" of {_MAX_CUSTOM_KEYS} (got {len(custom_keys)})"
                     ),
                     phase=phase,
                     ref=ref,
@@ -1203,6 +1450,221 @@ def _check_arns(
         for item in obj:
             if isinstance(item, (dict, list)):
                 _check_arns(item, results, phase, ref)
+
+
+# --- WCU estimation (WA340) -------------------------------------------------
+
+# Base WCU costs per statement type. Types with TextTransformations get
+# +1 per transformation on top of the base.
+_WCU_BASE: dict[str, int] = {
+    "ByteMatchStatement": 2,
+    "RegexMatchStatement": 5,
+    "RegexPatternSetReferenceStatement": 5,
+    "GeoMatchStatement": 2,
+    "IPSetReferenceStatement": 1,
+    "SizeConstraintStatement": 2,
+    "SqliMatchStatement": 15,
+    "XssMatchStatement": 15,
+    "LabelMatchStatement": 1,
+    "ManagedRuleGroupStatement": 100,  # varies, use 100 as estimate
+    "RuleGroupReferenceStatement": 1,
+}
+
+# Statement types where each TextTransformation adds +1 WCU
+_WCU_TEXT_TRANSFORM_TYPES = frozenset(
+    {
+        "ByteMatchStatement",
+        "RegexMatchStatement",
+        "SizeConstraintStatement",
+        "SqliMatchStatement",
+        "XssMatchStatement",
+    }
+)
+
+
+def _estimate_wcu(statement: dict) -> int:
+    """Recursively estimate the WCU cost of a statement tree."""
+    for stype, inner in statement.items():
+        if stype == "AndStatement":
+            if not isinstance(inner, dict):
+                return 1
+            stmts = inner.get("Statements", [])
+            if not isinstance(stmts, list):
+                return 1
+            return 1 + sum(_estimate_wcu(s) for s in stmts if isinstance(s, dict))
+
+        if stype == "OrStatement":
+            if not isinstance(inner, dict):
+                return 1
+            stmts = inner.get("Statements", [])
+            if not isinstance(stmts, list):
+                return 1
+            return 1 + sum(_estimate_wcu(s) for s in stmts if isinstance(s, dict))
+
+        if stype == "NotStatement":
+            if not isinstance(inner, dict):
+                return 1
+            nested = inner.get("Statement")
+            if isinstance(nested, dict):
+                return 1 + _estimate_wcu(nested)
+            return 1
+
+        if stype == "RateBasedStatement":
+            if not isinstance(inner, dict):
+                return 2
+            cost = 2
+            sds = inner.get("ScopeDownStatement")
+            if isinstance(sds, dict):
+                cost += _estimate_wcu(sds)
+            return cost
+
+        # Leaf statement
+        base = _WCU_BASE.get(stype, 1)
+        if stype in _WCU_TEXT_TRANSFORM_TYPES and isinstance(inner, dict):
+            tts = inner.get("TextTransformations", [])
+            if isinstance(tts, list):
+                base += len(tts)
+        return base
+
+    # Empty statement dict
+    return 0
+
+
+def _estimate_rule_wcu(rule: dict) -> int:
+    """Estimate WCU for a single rule (1 base + statement cost)."""
+    stmt = rule.get("Statement")
+    if not isinstance(stmt, dict):
+        return 1
+    return 1 + _estimate_wcu(stmt)
+
+
+# --- Heuristic always-true/false/contradictory (WA341-WA343) ---------------
+
+_GEO_ALWAYS_TRUE_THRESHOLD = 200
+
+
+def _check_heuristic_patterns(
+    stmt: dict,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA341/WA342/WA343: Detect likely always-true, contradictory, and always-false patterns."""
+    for stype, inner in stmt.items():
+        if not isinstance(inner, dict):
+            continue
+
+        # WA341: GeoMatchStatement with >= 200 country codes (likely always true)
+        if stype == "GeoMatchStatement":
+            codes = inner.get("CountryCodes", [])
+            if isinstance(codes, list) and len(codes) >= _GEO_ALWAYS_TRUE_THRESHOLD:
+                results.append(
+                    LintResult(
+                        rule_id="WA341",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"GeoMatchStatement with {len(codes)} country codes"
+                            " is likely always true (covers nearly all countries)"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field="Statement.GeoMatchStatement.CountryCodes",
+                        suggestion="Remove the GeoMatchStatement if all traffic should match",
+                    )
+                )
+
+        # WA343: SizeConstraintStatement with Size=0 and ComparisonOperator=LT
+        if stype == "SizeConstraintStatement":
+            size_val = inner.get("Size")
+            comp_op = inner.get("ComparisonOperator")
+            if (
+                isinstance(size_val, int)
+                and not isinstance(size_val, bool)
+                and size_val == 0
+                and comp_op == "LT"
+            ):
+                results.append(
+                    LintResult(
+                        rule_id="WA343",
+                        severity=Severity.WARNING,
+                        message=(
+                            "SizeConstraintStatement with Size=0 and ComparisonOperator=LT"
+                            " is always false (size cannot be negative)"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field="Statement.SizeConstraintStatement",
+                        suggestion=("Use ComparisonOperator=EQ for empty, or GT for non-empty"),
+                    )
+                )
+
+        # WA342: AndStatement with contradictory GeoMatch sets
+        if stype == "AndStatement":
+            stmts = inner.get("Statements", [])
+            if isinstance(stmts, list):
+                _check_contradictory_geo(stmts, results, phase, ref)
+
+        # Recurse into compound statements
+        if stype == "AndStatement":
+            stmts = inner.get("Statements", [])
+            if isinstance(stmts, list):
+                for s in stmts:
+                    if isinstance(s, dict):
+                        _check_heuristic_patterns(s, results, phase, ref)
+        elif stype == "OrStatement":
+            stmts = inner.get("Statements", [])
+            if isinstance(stmts, list):
+                for s in stmts:
+                    if isinstance(s, dict):
+                        _check_heuristic_patterns(s, results, phase, ref)
+        elif stype == "NotStatement":
+            nested = inner.get("Statement")
+            if isinstance(nested, dict):
+                _check_heuristic_patterns(nested, results, phase, ref)
+        elif stype == "RateBasedStatement":
+            sds = inner.get("ScopeDownStatement")
+            if isinstance(sds, dict):
+                _check_heuristic_patterns(sds, results, phase, ref)
+
+
+def _check_contradictory_geo(
+    stmts: list[dict],
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA342: Detect AndStatement with non-overlapping GeoMatch country code sets."""
+    geo_sets: list[set[str]] = []
+    for s in stmts:
+        if not isinstance(s, dict):
+            continue
+        gms = s.get("GeoMatchStatement")
+        if not isinstance(gms, dict):
+            continue
+        codes = gms.get("CountryCodes", [])
+        if isinstance(codes, list) and codes:
+            geo_sets.append({c for c in codes if isinstance(c, str)})
+
+    # Check all pairs for empty intersection
+    for i in range(len(geo_sets)):
+        for j in range(i + 1, len(geo_sets)):
+            if geo_sets[i] and geo_sets[j] and not (geo_sets[i] & geo_sets[j]):
+                results.append(
+                    LintResult(
+                        rule_id="WA342",
+                        severity=Severity.WARNING,
+                        message=(
+                            "AndStatement contains GeoMatchStatements with"
+                            " non-overlapping country codes — no request can"
+                            " match both conditions simultaneously"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field="Statement.AndStatement",
+                        suggestion="Use OrStatement to match traffic from either set",
+                    )
+                )
+                return  # One warning per AndStatement is enough
 
 
 # --- Cross-rule checks ------------------------------------------------------

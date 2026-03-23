@@ -1857,3 +1857,1237 @@ class TestDoubleNegation:
             }
         }
         assert "WA321" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA307  SearchString exceeds 8192-byte limit
+# ---------------------------------------------------------------------------
+
+
+class TestSearchStringSize:
+    def _byte_match_stmt(self, search_string):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": search_string,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    def test_wa307_within_limit(self):
+        stmt = self._byte_match_stmt("x" * 8192)
+        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa307_exceeds_limit(self):
+        stmt = self._byte_match_stmt("x" * 8193)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA307" in _ids(results)
+        wa307 = [r for r in results if r.rule_id == "WA307"]
+        assert "8192-byte" in wa307[0].message
+        assert "8193 bytes" in wa307[0].message
+
+    def test_wa307_multibyte_characters(self):
+        """Multi-byte UTF-8 chars count by byte length, not char count."""
+        # e-acute = 2 bytes each; 4097 * 2 = 8194 bytes > 8192
+        stmt = self._byte_match_stmt("\u00e9" * 4097)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA307" in _ids(results)
+
+    def test_wa307_exactly_at_limit_multibyte(self):
+        """4096 two-byte chars = 8192 bytes = exactly at limit."""
+        stmt = self._byte_match_stmt("\u00e9" * 4096)
+        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa307_short_string(self):
+        stmt = self._byte_match_stmt("bad")
+        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa307_missing_search_string_no_crash(self):
+        """Missing SearchString is caught by WA312, not WA307."""
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA312" in _ids(results)
+        assert "WA307" not in _ids(results)
+
+    def test_wa307_non_string_search_string_no_crash(self):
+        """Non-string SearchString should not fire WA307."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": 12345,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa307_field_is_set(self):
+        stmt = self._byte_match_stmt("x" * 8193)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa307 = [r for r in results if r.rule_id == "WA307"]
+        assert wa307[0].field == "Statement.ByteMatchStatement.SearchString"
+
+    def test_wa307_recursive_in_not(self):
+        """WA307 fires recursively inside compound statements."""
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "ByteMatchStatement": {
+                        "SearchString": "x" * 8193,
+                        "FieldToMatch": {"UriPath": {}},
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        "PositionalConstraint": "CONTAINS",
+                    }
+                }
+            }
+        }
+        assert "WA307" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA308  RegexString exceeds 512-byte limit
+# ---------------------------------------------------------------------------
+
+
+class TestRegexStringSize:
+    def _regex_stmt(self, regex_string):
+        return {
+            "RegexMatchStatement": {
+                "RegexString": regex_string,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+
+    def test_wa308_within_limit(self):
+        stmt = self._regex_stmt("x" * 512)
+        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa308_exceeds_limit(self):
+        stmt = self._regex_stmt("x" * 513)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA308" in _ids(results)
+        wa308 = [r for r in results if r.rule_id == "WA308"]
+        assert "512-byte" in wa308[0].message
+        assert "513 bytes" in wa308[0].message
+
+    def test_wa308_multibyte_characters(self):
+        """Multi-byte UTF-8 chars count by byte length, not char count."""
+        # 257 two-byte chars = 514 bytes > 512
+        stmt = self._regex_stmt("\u00e9" * 257)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA308" in _ids(results)
+
+    def test_wa308_exactly_at_limit_multibyte(self):
+        """256 two-byte chars = 512 bytes = exactly at limit."""
+        stmt = self._regex_stmt("\u00e9" * 256)
+        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa308_short_regex(self):
+        stmt = self._regex_stmt("^/api/.*")
+        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa308_missing_regex_string_no_crash(self):
+        """Missing RegexString is caught by WA314, not WA308."""
+        stmt = {
+            "RegexMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA314" in _ids(results)
+        assert "WA308" not in _ids(results)
+
+    def test_wa308_non_string_regex_no_crash(self):
+        """Non-string RegexString should not fire WA308."""
+        stmt = {
+            "RegexMatchStatement": {
+                "RegexString": 42,
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa308_field_is_set(self):
+        stmt = self._regex_stmt("x" * 513)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa308 = [r for r in results if r.rule_id == "WA308"]
+        assert wa308[0].field == "Statement.RegexMatchStatement.RegexString"
+
+    def test_wa308_recursive_in_and(self):
+        """WA308 fires recursively inside compound statements."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "RegexMatchStatement": {
+                            "RegexString": "x" * 513,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                ]
+            }
+        }
+        assert "WA308" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA309  RateBasedStatement without ScopeDownStatement
+# ---------------------------------------------------------------------------
+
+
+class TestRateBasedNoScopeDown:
+    def test_wa309_no_scope_down(self):
+        stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA309" in _ids(results)
+        wa309 = [r for r in results if r.rule_id == "WA309"]
+        assert "rate-limits all traffic" in wa309[0].message
+
+    def test_wa309_with_scope_down(self):
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "IP",
+                "ScopeDownStatement": {
+                    "ByteMatchStatement": {
+                        "SearchString": "/api",
+                        "FieldToMatch": {"UriPath": {}},
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        "PositionalConstraint": "STARTS_WITH",
+                    }
+                },
+            }
+        }
+        assert "WA309" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa309_severity_is_warning(self):
+        stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
+        results = validate_rules([_rule(Statement=stmt)])
+        wa309 = [r for r in results if r.rule_id == "WA309"]
+        assert wa309[0].severity.name == "WARNING"
+
+    def test_wa309_suggestion(self):
+        stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
+        results = validate_rules([_rule(Statement=stmt)])
+        wa309 = [r for r in results if r.rule_id == "WA309"]
+        assert "ScopeDownStatement" in wa309[0].suggestion
+
+    def test_wa309_field_is_set(self):
+        stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
+        results = validate_rules([_rule(Statement=stmt)])
+        wa309 = [r for r in results if r.rule_id == "WA309"]
+        assert wa309[0].field == "Statement.RateBasedStatement.ScopeDownStatement"
+
+    def test_wa309_not_dict_no_crash(self):
+        """Non-dict RateBasedStatement should not crash WA309."""
+        stmt = {"RateBasedStatement": "invalid"}
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA309" not in _ids(results)
+
+
+# ---------------------------------------------------------------------------
+# WA320  FieldToMatch type incompatible with statement type
+# ---------------------------------------------------------------------------
+
+
+class TestFieldToMatchIncompatible:
+    def test_wa320_jsonbody_on_byte_match_ok(self):
+        """JsonBody is valid on ByteMatchStatement."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_jsonbody_on_regex_match_ok(self):
+        """JsonBody is valid on RegexMatchStatement."""
+        stmt = {
+            "RegexMatchStatement": {
+                "RegexString": "test",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_jsonbody_on_size_constraint_ok(self):
+        """JsonBody is valid on SizeConstraintStatement."""
+        stmt = {
+            "SizeConstraintStatement": {
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "ComparisonOperator": "GT",
+                "Size": 1000,
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_jsonbody_on_sqli_ok(self):
+        """JsonBody is valid on SqliMatchStatement."""
+        stmt = {
+            "SqliMatchStatement": {
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_jsonbody_on_xss_ok(self):
+        """JsonBody is valid on XssMatchStatement."""
+        stmt = {
+            "XssMatchStatement": {
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_jsonbody_on_label_match_fires(self):
+        """JsonBody on LabelMatchStatement should fire WA320 -- LabelMatchStatement
+        doesn't inspect request content."""
+        stmt = {
+            "LabelMatchStatement": {
+                "Scope": "LABEL",
+                "Key": "awswaf:test",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA320" in _ids(results)
+        wa320 = [r for r in results if r.rule_id == "WA320"]
+        assert "JsonBody" in wa320[0].message
+        assert "LabelMatchStatement" in wa320[0].message
+
+    def test_wa320_severity_is_warning(self):
+        stmt = {
+            "LabelMatchStatement": {
+                "Scope": "LABEL",
+                "Key": "awswaf:test",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa320 = [r for r in results if r.rule_id == "WA320"]
+        assert wa320[0].severity.name == "WARNING"
+
+    def test_wa320_suggestion(self):
+        stmt = {
+            "LabelMatchStatement": {
+                "Scope": "LABEL",
+                "Key": "awswaf:test",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa320 = [r for r in results if r.rule_id == "WA320"]
+        assert "JsonBody is only applicable to" in wa320[0].suggestion
+
+    def test_wa320_non_jsonbody_no_fire(self):
+        """Non-JsonBody FieldToMatch keys on any statement should not fire WA320."""
+        stmt = {
+            "LabelMatchStatement": {
+                "Scope": "LABEL",
+                "Key": "awswaf:test",
+                "FieldToMatch": {"UriPath": {}},
+            }
+        }
+        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa320_recursive_in_compound(self):
+        """WA320 fires recursively inside compound statements."""
+        stmt = {
+            "OrStatement": {
+                "Statements": [
+                    {
+                        "LabelMatchStatement": {
+                            "Scope": "LABEL",
+                            "Key": "awswaf:test",
+                            "FieldToMatch": {
+                                "JsonBody": {
+                                    "MatchScope": "ALL",
+                                    "InvalidFallbackBehavior": "MATCH",
+                                }
+                            },
+                        }
+                    },
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                ]
+            }
+        }
+        assert "WA320" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA323  GeoMatchStatement exceeds 25 country codes
+# ---------------------------------------------------------------------------
+
+
+class TestGeoMatchCountLimit:
+    def test_wa323_exactly_25_ok(self):
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(25)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa323_exceeds_25(self):
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(26)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA323" in _ids(results)
+        wa323 = [r for r in results if r.rule_id == "WA323"]
+        assert "26" in wa323[0].message
+        assert "25" in wa323[0].message
+
+    def test_wa323_empty_ok(self):
+        stmt = {"GeoMatchStatement": {"CountryCodes": []}}
+        assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa323_field_is_set(self):
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(26)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        results = validate_rules([_rule(Statement=stmt)])
+        wa323 = [r for r in results if r.rule_id == "WA323"]
+        assert wa323[0].field == "Statement.GeoMatchStatement.CountryCodes"
+
+
+# ---------------------------------------------------------------------------
+# WA324  CustomKeys exceeds maximum of 5
+# ---------------------------------------------------------------------------
+
+
+class TestCustomKeysLimit:
+    def _rate_stmt(self, custom_keys):
+        return {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "CUSTOM_KEYS",
+                "CustomKeys": custom_keys,
+            }
+        }
+
+    def test_wa324_exactly_5_ok(self):
+        keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(5)]
+        stmt = self._rate_stmt(keys)
+        assert "WA324" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa324_exceeds_5(self):
+        keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(6)]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA324" in _ids(results)
+        wa324 = [r for r in results if r.rule_id == "WA324"]
+        assert "6" in wa324[0].message
+
+    def test_wa324_empty_list_fires_wa318_not_wa324(self):
+        """Empty CustomKeys triggers WA318, not WA324."""
+        stmt = self._rate_stmt([])
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA318" in _ids(results)
+        assert "WA324" not in _ids(results)
+
+    def test_wa324_field_is_set(self):
+        keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(6)]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa324 = [r for r in results if r.rule_id == "WA324"]
+        assert wa324[0].field == "Statement.RateBasedStatement.CustomKeys"
+
+
+# ---------------------------------------------------------------------------
+# WA325  Headers/Cookies MatchPattern exceeds 5 patterns
+# ---------------------------------------------------------------------------
+
+
+class TestMatchPatternLimit:
+    def _byte_match_with_headers(self, match_pattern):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "Headers": {
+                        "MatchPattern": match_pattern,
+                        "MatchScope": "ALL",
+                        "OversizeHandling": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    def _byte_match_with_cookies(self, match_pattern):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "Cookies": {
+                        "MatchPattern": match_pattern,
+                        "MatchScope": "ALL",
+                        "OversizeHandling": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    def test_wa325_headers_included_5_ok(self):
+        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e"]}
+        stmt = self._byte_match_with_headers(mp)
+        assert "WA325" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa325_headers_included_exceeds(self):
+        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        stmt = self._byte_match_with_headers(mp)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA325" in _ids(results)
+        wa325 = [r for r in results if r.rule_id == "WA325"]
+        assert "IncludedHeaders" in wa325[0].message
+        assert "6" in wa325[0].message
+
+    def test_wa325_headers_excluded_exceeds(self):
+        mp = {"ExcludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        stmt = self._byte_match_with_headers(mp)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA325" in _ids(results)
+        wa325 = [r for r in results if r.rule_id == "WA325"]
+        assert "ExcludedHeaders" in wa325[0].message
+
+    def test_wa325_cookies_included_exceeds(self):
+        mp = {"IncludedCookies": ["a", "b", "c", "d", "e", "f"]}
+        stmt = self._byte_match_with_cookies(mp)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA325" in _ids(results)
+        wa325 = [r for r in results if r.rule_id == "WA325"]
+        assert "IncludedCookies" in wa325[0].message
+
+    def test_wa325_cookies_excluded_exceeds(self):
+        mp = {"ExcludedCookies": ["a", "b", "c", "d", "e", "f"]}
+        stmt = self._byte_match_with_cookies(mp)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA325" in _ids(results)
+
+    def test_wa325_headers_no_match_pattern_no_crash(self):
+        """Headers without MatchPattern should not crash."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"Headers": {"MatchScope": "ALL", "OversizeHandling": "MATCH"}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA325" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa325_field_is_set(self):
+        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        stmt = self._byte_match_with_headers(mp)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa325 = [r for r in results if r.rule_id == "WA325"]
+        assert "Headers.MatchPattern.IncludedHeaders" in wa325[0].field
+
+
+# ---------------------------------------------------------------------------
+# WA331  TextTransformations exceeds maximum of 10 per statement
+# ---------------------------------------------------------------------------
+
+
+class TestTextTransformationsLimit:
+    def _stmt_with_transforms(self, count):
+        transforms = [{"Priority": i, "Type": "NONE"} for i in range(count)]
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": transforms,
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    def test_wa331_exactly_10_ok(self):
+        stmt = self._stmt_with_transforms(10)
+        assert "WA331" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa331_exceeds_10(self):
+        stmt = self._stmt_with_transforms(11)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA331" in _ids(results)
+        wa331 = [r for r in results if r.rule_id == "WA331"]
+        assert "11" in wa331[0].message
+        assert "10" in wa331[0].message
+
+    def test_wa331_1_ok(self):
+        stmt = self._stmt_with_transforms(1)
+        assert "WA331" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa331_field_is_set(self):
+        stmt = self._stmt_with_transforms(11)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa331 = [r for r in results if r.rule_id == "WA331"]
+        assert "TextTransformations" in wa331[0].field
+
+
+# ---------------------------------------------------------------------------
+# WA332  Duplicate TextTransformation Priority
+# ---------------------------------------------------------------------------
+
+
+class TestTextTransformationDuplicatePriority:
+    def test_wa332_duplicate_priority(self):
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "URL_DECODE"},
+                    {"Priority": 0, "Type": "LOWERCASE"},
+                ],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA332" in _ids(results)
+        wa332 = [r for r in results if r.rule_id == "WA332"]
+        assert "Priority 0" in wa332[0].message
+
+    def test_wa332_unique_priorities_ok(self):
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "URL_DECODE"},
+                    {"Priority": 1, "Type": "LOWERCASE"},
+                ],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA332" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa332_fires_once_per_duplicate(self):
+        """Three transforms with same priority should fire once (at the second occurrence)."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "URL_DECODE"},
+                    {"Priority": 0, "Type": "LOWERCASE"},
+                    {"Priority": 0, "Type": "CMD_LINE"},
+                ],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa332 = [r for r in results if r.rule_id == "WA332"]
+        assert len(wa332) == 2  # fires at index 1 and index 2
+
+    def test_wa332_field_is_set(self):
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "URL_DECODE"},
+                    {"Priority": 0, "Type": "LOWERCASE"},
+                ],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa332 = [r for r in results if r.rule_id == "WA332"]
+        assert wa332[0].field == "Statement.ByteMatchStatement.TextTransformations[1].Priority"
+
+
+# ---------------------------------------------------------------------------
+# WA334  SizeConstraintStatement.Size must be non-negative
+# ---------------------------------------------------------------------------
+
+
+class TestSizeConstraintNonNegative:
+    def _size_stmt(self, size):
+        return {
+            "SizeConstraintStatement": {
+                "FieldToMatch": {"Body": {}},
+                "ComparisonOperator": "GT",
+                "Size": size,
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+
+    def test_wa334_negative_size(self):
+        stmt = self._size_stmt(-1)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA334" in _ids(results)
+        wa334 = [r for r in results if r.rule_id == "WA334"]
+        assert "-1" in wa334[0].message
+
+    def test_wa334_zero_ok(self):
+        stmt = self._size_stmt(0)
+        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa334_positive_ok(self):
+        stmt = self._size_stmt(8192)
+        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa334_non_int_no_fire(self):
+        """Non-integer Size should not fire WA334 (type issues are separate)."""
+        stmt = self._size_stmt("100")
+        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa334_field_is_set(self):
+        stmt = self._size_stmt(-5)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa334 = [r for r in results if r.rule_id == "WA334"]
+        assert wa334[0].field == "Statement.SizeConstraintStatement.Size"
+
+
+# ---------------------------------------------------------------------------
+# WA335  JsonBody.MatchScope invalid
+# ---------------------------------------------------------------------------
+
+
+class TestJsonBodyMatchScope:
+    def _json_body_stmt(self, match_scope, fallback="MATCH"):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": match_scope,
+                        "InvalidFallbackBehavior": fallback,
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    @pytest.mark.parametrize("val", ["ALL", "KEY", "VALUE"])
+    def test_wa335_valid(self, val):
+        stmt = self._json_body_stmt(val)
+        assert "WA335" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa335_invalid(self):
+        stmt = self._json_body_stmt("KEYS")
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA335" in _ids(results)
+        wa335 = [r for r in results if r.rule_id == "WA335"]
+        assert "KEYS" in wa335[0].message
+
+    def test_wa335_non_string_no_fire(self):
+        """Non-string MatchScope should not fire WA335."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": 42,
+                        "InvalidFallbackBehavior": "MATCH",
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA335" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa335_field_is_set(self):
+        stmt = self._json_body_stmt("INVALID")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa335 = [r for r in results if r.rule_id == "WA335"]
+        assert "JsonBody.MatchScope" in wa335[0].field
+
+    def test_wa335_suggestion(self):
+        stmt = self._json_body_stmt("INVALID")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa335 = [r for r in results if r.rule_id == "WA335"]
+        assert wa335[0].suggestion is not None
+
+
+# ---------------------------------------------------------------------------
+# WA336  JsonBody.InvalidFallbackBehavior invalid
+# ---------------------------------------------------------------------------
+
+
+class TestJsonBodyFallbackBehavior:
+    def _json_body_stmt(self, fallback, match_scope="ALL"):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": match_scope,
+                        "InvalidFallbackBehavior": fallback,
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    @pytest.mark.parametrize("val", ["MATCH", "NO_MATCH", "EVALUATE_AS_STRING"])
+    def test_wa336_valid(self, val):
+        stmt = self._json_body_stmt(val)
+        assert "WA336" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa336_invalid(self):
+        stmt = self._json_body_stmt("IGNORE")
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA336" in _ids(results)
+        wa336 = [r for r in results if r.rule_id == "WA336"]
+        assert "IGNORE" in wa336[0].message
+
+    def test_wa336_non_string_no_fire(self):
+        """Non-string InvalidFallbackBehavior should not fire WA336."""
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {
+                    "JsonBody": {
+                        "MatchScope": "ALL",
+                        "InvalidFallbackBehavior": 123,
+                    }
+                },
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA336" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa336_field_is_set(self):
+        stmt = self._json_body_stmt("BAD")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa336 = [r for r in results if r.rule_id == "WA336"]
+        assert "JsonBody.InvalidFallbackBehavior" in wa336[0].field
+
+    def test_wa336_suggestion(self):
+        stmt = self._json_body_stmt("BAD")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa336 = [r for r in results if r.rule_id == "WA336"]
+        assert wa336[0].suggestion is not None
+
+
+# ---------------------------------------------------------------------------
+# WA341  GeoMatchStatement likely always true
+# ---------------------------------------------------------------------------
+
+
+class TestGeoAlwaysTrue:
+    def test_wa341_200_country_codes(self):
+        """GeoMatch with >= 200 codes triggers WA341."""
+        codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(200)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa341_249_country_codes(self):
+        """GeoMatch with 249 codes (all countries) triggers WA341."""
+        codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(249)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa341_199_country_codes_no_warn(self):
+        """GeoMatch with < 200 codes does NOT trigger WA341."""
+        codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(199)]
+        stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
+        assert "WA341" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa341_small_set_no_warn(self):
+        """GeoMatch with a few codes does NOT trigger WA341."""
+        stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "CA", "GB"]}}
+        assert "WA341" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa341_nested_in_and(self):
+        """WA341 fires for GeoMatch nested in AndStatement."""
+        codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(200)]
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": codes}},
+                    {"LabelMatchStatement": {"Scope": "LABEL", "Key": "test"}},
+                ]
+            }
+        }
+        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA342  Contradictory AND conditions (non-overlapping GeoMatch sets)
+# ---------------------------------------------------------------------------
+
+
+class TestContradictoryGeo:
+    def test_wa342_non_overlapping_sets(self):
+        """AND with non-overlapping GeoMatch sets triggers WA342."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US", "CA"]}},
+                    {"GeoMatchStatement": {"CountryCodes": ["DE", "FR"]}},
+                ]
+            }
+        }
+        assert "WA342" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa342_overlapping_sets_no_warn(self):
+        """AND with overlapping GeoMatch sets does NOT trigger WA342."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US", "CA", "DE"]}},
+                    {"GeoMatchStatement": {"CountryCodes": ["DE", "FR"]}},
+                ]
+            }
+        }
+        assert "WA342" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa342_single_geo_no_warn(self):
+        """AND with only one GeoMatch does NOT trigger WA342."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                    {"LabelMatchStatement": {"Scope": "LABEL", "Key": "test"}},
+                ]
+            }
+        }
+        assert "WA342" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa342_fires_once_for_triple(self):
+        """Three contradictory GeoMatch sets produce only one WA342."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                    {"GeoMatchStatement": {"CountryCodes": ["DE"]}},
+                    {"GeoMatchStatement": {"CountryCodes": ["FR"]}},
+                ]
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa342 = [r for r in results if r.rule_id == "WA342"]
+        assert len(wa342) == 1
+
+    def test_wa342_nested_and_in_or(self):
+        """Contradictory GeoMatch inside nested AND also detected."""
+        stmt = {
+            "OrStatement": {
+                "Statements": [
+                    {
+                        "AndStatement": {
+                            "Statements": [
+                                {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                                {"GeoMatchStatement": {"CountryCodes": ["DE"]}},
+                            ]
+                        }
+                    },
+                    {"LabelMatchStatement": {"Scope": "LABEL", "Key": "test"}},
+                ]
+            }
+        }
+        assert "WA342" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA343  Always-false pattern (Size < 0 impossible)
+# ---------------------------------------------------------------------------
+
+
+class TestAlwaysFalse:
+    def test_wa343_size_zero_lt(self):
+        """SizeConstraint with Size=0 and LT triggers WA343."""
+        stmt = {
+            "SizeConstraintStatement": {
+                "FieldToMatch": {"Body": {}},
+                "ComparisonOperator": "LT",
+                "Size": 0,
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa343_size_zero_eq_no_warn(self):
+        """SizeConstraint with Size=0 and EQ does NOT trigger WA343."""
+        stmt = {
+            "SizeConstraintStatement": {
+                "FieldToMatch": {"Body": {}},
+                "ComparisonOperator": "EQ",
+                "Size": 0,
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA343" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa343_size_nonzero_lt_no_warn(self):
+        """SizeConstraint with Size=1 and LT does NOT trigger WA343."""
+        stmt = {
+            "SizeConstraintStatement": {
+                "FieldToMatch": {"Body": {}},
+                "ComparisonOperator": "LT",
+                "Size": 1,
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert "WA343" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa343_nested_in_not(self):
+        """WA343 fires for SizeConstraint nested in NotStatement."""
+        stmt = {
+            "NotStatement": {
+                "Statement": {
+                    "SizeConstraintStatement": {
+                        "FieldToMatch": {"Body": {}},
+                        "ComparisonOperator": "LT",
+                        "Size": 0,
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    }
+                }
+            }
+        }
+        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa343_nested_in_rate_based(self):
+        """WA343 fires for SizeConstraint in RateBasedStatement ScopeDown."""
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "IP",
+                "ScopeDownStatement": {
+                    "SizeConstraintStatement": {
+                        "FieldToMatch": {"Body": {}},
+                        "ComparisonOperator": "LT",
+                        "Size": 0,
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    }
+                },
+            }
+        }
+        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WCU estimation (unit tests for _estimate_wcu and _estimate_rule_wcu)
+# ---------------------------------------------------------------------------
+
+
+class TestWcuEstimation:
+    """Unit tests for WCU estimation functions."""
+
+    def test_byte_match_base(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+                "SearchString": "bad",
+            }
+        }
+        # Base 2 + 1 text transformation = 3
+        assert _estimate_wcu(stmt) == 3
+
+    def test_byte_match_multiple_transforms(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "NONE"},
+                    {"Priority": 1, "Type": "LOWERCASE"},
+                ],
+                "PositionalConstraint": "CONTAINS",
+                "SearchString": "bad",
+            }
+        }
+        # Base 2 + 2 text transformations = 4
+        assert _estimate_wcu(stmt) == 4
+
+    def test_geo_match(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "CA"]}}
+        assert _estimate_wcu(stmt) == 2
+
+    def test_ipset_reference(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "IPSetReferenceStatement": {
+                "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/ipset/test/abc"
+            }
+        }
+        assert _estimate_wcu(stmt) == 1
+
+    def test_sqli_match(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "SqliMatchStatement": {
+                "FieldToMatch": {"QueryString": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "URL_DECODE"}],
+            }
+        }
+        # Base 15 + 1 text transformation = 16
+        assert _estimate_wcu(stmt) == 16
+
+    def test_managed_rule_group_estimate(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+            }
+        }
+        assert _estimate_wcu(stmt) == 100
+
+    def test_and_statement(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                    {"IPSetReferenceStatement": {"ARN": "arn:aws:wafv2:x:y:z/ipset/t/a"}},
+                ]
+            }
+        }
+        # 1 (And base) + 2 (Geo) + 1 (IPSet) = 4
+        assert _estimate_wcu(stmt) == 4
+
+    def test_or_statement(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "OrStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                    {"LabelMatchStatement": {"Scope": "LABEL", "Key": "test"}},
+                ]
+            }
+        }
+        # 1 (Or base) + 2 (Geo) + 1 (Label) = 4
+        assert _estimate_wcu(stmt) == 4
+
+    def test_not_statement(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}}}}
+        # 1 (Not base) + 2 (Geo) = 3
+        assert _estimate_wcu(stmt) == 3
+
+    def test_rate_based_with_scope_down(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "IP",
+                "ScopeDownStatement": {
+                    "ByteMatchStatement": {
+                        "FieldToMatch": {"UriPath": {}},
+                        "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        "PositionalConstraint": "CONTAINS",
+                        "SearchString": "/api",
+                    }
+                },
+            }
+        }
+        # 2 (Rate base) + 2 (ByteMatch base) + 1 (transform) = 5
+        assert _estimate_wcu(stmt) == 5
+
+    def test_rate_based_without_scope_down(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
+        assert _estimate_wcu(stmt) == 2
+
+    def test_label_match(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"LabelMatchStatement": {"Scope": "LABEL", "Key": "awswaf:managed:test"}}
+        assert _estimate_wcu(stmt) == 1
+
+    def test_rule_wcu_adds_base(self):
+        from octorules_aws.validate import _estimate_rule_wcu
+
+        rule = {
+            "ref": "test",
+            "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+        }
+        # 1 (rule base) + 2 (Geo) = 3
+        assert _estimate_rule_wcu(rule) == 3
+
+    def test_rule_wcu_missing_statement(self):
+        from octorules_aws.validate import _estimate_rule_wcu
+
+        rule = {"ref": "test"}
+        assert _estimate_rule_wcu(rule) == 1
+
+    def test_empty_statement_dict(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        assert _estimate_wcu({}) == 0
+
+    def test_unknown_statement_type_defaults_to_1(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"FutureNewStatement": {"SomeField": "value"}}
+        assert _estimate_wcu(stmt) == 1

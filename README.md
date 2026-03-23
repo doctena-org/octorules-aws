@@ -90,12 +90,15 @@ All phases require `action` to be specified explicitly (no default action).
 
 ## Custom rulesets (Rule Groups)
 
-AWS WAF Rule Groups map to octorules custom rulesets. Add a `custom_rulesets` section to your rules file:
+AWS WAF Rule Groups map to octorules custom rulesets. octorules manages the full
+lifecycle: create, update rules, and delete.
+
+### Managing an existing Rule Group
 
 ```yaml
 # rules/my-web-acl.yaml
 custom_rulesets:
-  - id: arn:aws:wafv2:us-east-1:123456789012:regional/rulegroup/my-group/abcd1234
+  - id: abcd1234-5678-9012-3456-789012345678
     name: My Rule Group
     phase: aws_waf_custom
     rules:
@@ -110,6 +113,47 @@ custom_rulesets:
           CloudWatchMetricsEnabled: true
           MetricName: BlockBadIPs
 ```
+
+### Creating a new Rule Group
+
+Omit the `id` field and add `capacity` to create a new Rule Group:
+
+```yaml
+custom_rulesets:
+  - name: Block Bad Actors
+    capacity: 100
+    phase: aws_waf_custom
+    rules:
+      - ref: block-scanner
+        action:
+          Block: {}
+        Statement:
+          ByteMatchStatement:
+            SearchString: "BadBot"
+            FieldToMatch:
+              SingleHeader:
+                Name: user-agent
+            PositionalConstraint: CONTAINS
+            TextTransformations:
+              - Priority: 0
+                Type: LOWERCASE
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          CloudWatchMetricsEnabled: true
+          MetricName: BlockScanner
+```
+
+`capacity` is an AWS WAF concept — an immutable budget (1-5000) that limits rule
+complexity within the Rule Group. It cannot be changed after creation. If you need
+more capacity, delete and recreate the Rule Group with a higher value.
+
+**How it works:**
+
+- The `name` field is the identity key. Rule Groups are matched between YAML and AWS by name.
+- The presence of a `custom_rulesets:` key means ALL Rule Groups are managed — Rule Groups in AWS not in YAML are planned for deletion.
+- If the `custom_rulesets:` key is absent, Rule Groups are ignored entirely.
+- `id` is optional: present for existing Rule Groups, absent for new ones.
+- After creation, use `octorules dump` to export the assigned `id` back to YAML.
 
 ## Lists (IP Sets)
 
@@ -130,17 +174,17 @@ lists:
 
 ## Linting
 
-42 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
+59 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
 
 | Prefix | Category | Rules |
 |--------|----------|-------|
 | WA001-WA005, WA010, WA020-WA022 | Structure & YAML | 9 |
 | WA100-WA101 | Priority | 2 |
 | WA200-WA201 | Action type | 2 |
-| WA300-WA321 | Statement deep validation | 18 |
+| WA300-WA343 | Statement deep validation | 33 |
 | WA350-WA353 | Action parameters | 4 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA500-WA501, WA520 | Cross-rule | 3 |
+| WA326, WA340, WA500-WA501, WA520 | Cross-rule | 5 |
 | WA600 | Best practice | 1 |
 
 ```bash
@@ -153,8 +197,9 @@ Lint rules are registered automatically when octorules-aws is installed. See [do
 
 ## Known limitations
 
-- **Web ACL creation/deletion:** octorules-aws manages rules within existing Web ACLs and Rule Groups. Creating or deleting Web ACLs and Rule Groups must be done via the AWS console or CLI.
-- **Concurrent updates:** Rule updates use AWS WAF optimistic locking (LockToken). Stale lock errors are retried automatically (up to 3 attempts). If the same Web ACL is updated by multiple writers targeting the **same phase** simultaneously, the last writer wins.
+- **Web ACL creation/deletion:** octorules-aws manages rules and Rule Groups within existing Web ACLs. Creating or deleting Web ACLs must be done via the AWS console, CLI, or Terraform.
+- **Concurrent updates:** Rule updates use AWS WAF optimistic locking (LockToken). Stale lock errors are retried automatically (up to 3 attempts with linear backoff). If the same Web ACL is updated by multiple writers targeting the **same phase** simultaneously, the last writer wins.
+- **Rule Group capacity is immutable:** AWS WAF sets Rule Group capacity at creation time. To change capacity, delete and recreate the Rule Group with the new value.
 
 ## Development
 
