@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-23
+
 ### Added
 - **WA326** (INFO): IPSetReferenceStatement references an IP Set name not
   found in the `lists` section. Suggests adding it for full lifecycle
