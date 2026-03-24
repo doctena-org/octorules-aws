@@ -1056,3 +1056,161 @@ class TestMalformedResponses:
         search_str = rules[0]["Statement"]["ByteMatchStatement"]["SearchString"]
         assert isinstance(search_str, str)
         assert search_str == "bad-bot"
+
+
+class TestConcurrentWorkers:
+    """Tests for concurrent/parallel usage with max_workers > 1."""
+
+    def _setup_provider(self, mock_waf_client, web_acl, *, max_workers=4):
+        """Create a provider with multiple Web ACLs resolved."""
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [
+                {"Name": "acl-a", "Id": "id-a", "ARN": "arn:a"},
+                {"Name": "acl-b", "Id": "id-b", "ARN": "arn:b"},
+                {"Name": "acl-c", "Id": "id-c", "ARN": "arn:c"},
+            ]
+        }
+        provider = AwsWafProvider(client=mock_waf_client, max_workers=max_workers)
+        provider.resolve_zone_id("acl-a")
+        provider.resolve_zone_id("acl-b")
+        provider.resolve_zone_id("acl-c")
+        return provider
+
+    def test_concurrent_get_phase_rules_success(self, mock_waf_client, web_acl):
+        """Multiple concurrent get_phase_rules calls all return correct results."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        provider = self._setup_provider(mock_waf_client, web_acl)
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": web_acl,
+            "LockToken": "lock-1",
+        }
+
+        zone_ids = ["id-a", "id-b", "id-c"]
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    provider.get_phase_rules,
+                    Scope(zone_id=zid, label=""),
+                    "aws_waf_custom",
+                ): zid
+                for zid in zone_ids
+            }
+            results = {}
+            for future in as_completed(futures):
+                zid = futures[future]
+                results[zid] = future.result()
+
+        # All three zones got results
+        assert len(results) == 3
+        for zid in zone_ids:
+            assert len(results[zid]) == 1
+            assert results[zid][0]["ref"] == "block-bad-ips"
+
+    def test_concurrent_partial_failure(self, mock_waf_client, web_acl):
+        """Some zones succeed while others raise ProviderError."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        provider = self._setup_provider(mock_waf_client, web_acl)
+
+        call_count = 0
+
+        def mock_get_web_acl(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            acl_id = kwargs.get("Id", "")
+            if acl_id == "id-b":
+                raise _make_client_error("WAFInternalErrorException", "Internal error")
+            return {"WebACL": web_acl, "LockToken": "lock-1"}
+
+        mock_waf_client.get_web_acl.side_effect = mock_get_web_acl
+
+        zone_ids = ["id-a", "id-b", "id-c"]
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    provider.get_phase_rules,
+                    Scope(zone_id=zid, label=""),
+                    "aws_waf_custom",
+                ): zid
+                for zid in zone_ids
+            }
+            results = {}
+            errors = {}
+            for future in as_completed(futures):
+                zid = futures[future]
+                try:
+                    results[zid] = future.result()
+                except ProviderError as e:
+                    errors[zid] = e
+
+        # id-a and id-c succeed, id-b fails
+        assert "id-a" in results
+        assert "id-c" in results
+        assert "id-b" in errors
+        assert len(results) == 2
+        assert len(errors) == 1
+
+    def test_concurrent_auth_error_propagates(self, mock_waf_client, web_acl):
+        """ProviderAuthError propagates from concurrent execution."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        provider = self._setup_provider(mock_waf_client, web_acl)
+
+        def mock_get_web_acl(**kwargs):
+            acl_id = kwargs.get("Id", "")
+            if acl_id == "id-a":
+                raise _make_client_error("AccessDeniedException", "Forbidden")
+            return {"WebACL": web_acl, "LockToken": "lock-1"}
+
+        mock_waf_client.get_web_acl.side_effect = mock_get_web_acl
+
+        zone_ids = ["id-a", "id-b", "id-c"]
+        auth_errors = []
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    provider.get_phase_rules,
+                    Scope(zone_id=zid, label=""),
+                    "aws_waf_custom",
+                ): zid
+                for zid in zone_ids
+            }
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except ProviderAuthError as e:
+                    auth_errors.append(e)
+
+        # At least one ProviderAuthError surfaced
+        assert len(auth_errors) >= 1
+
+    def test_concurrent_resolve_zone_id_populates_all_metadata(self, mock_waf_client):
+        """Concurrent resolve_zone_id calls populate _web_acl_meta for all ACLs."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        acl_names = [f"acl-{i}" for i in range(10)]
+
+        def mock_list_web_acls(**kwargs):
+            return {
+                "WebACLs": [
+                    {"Name": name, "Id": f"id-{name}", "ARN": f"arn:{name}"} for name in acl_names
+                ]
+            }
+
+        mock_waf_client.list_web_acls.side_effect = mock_list_web_acls
+        provider = AwsWafProvider(client=mock_waf_client, max_workers=4)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(provider.resolve_zone_id, name): name for name in acl_names}
+            results = {}
+            for future in as_completed(futures):
+                name = futures[future]
+                results[name] = future.result()
+
+        # All 10 ACLs resolved
+        assert len(results) == 10
+        for name in acl_names:
+            assert results[name] == f"id-{name}"
+        # All metadata populated (accessed under lock)
+        assert len(provider._web_acl_meta) == 10
