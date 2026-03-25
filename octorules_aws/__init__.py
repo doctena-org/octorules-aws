@@ -18,6 +18,8 @@ _AWS_PHASES = [
     ),
 ]
 
+AWS_PHASE_NAMES: frozenset[str] = frozenset(p.friendly_name for p in _AWS_PHASES)
+
 register_phases(_AWS_PHASES)
 register_api_fields("rule", {"OverrideAction"})
 register_non_phase_key("custom_rulesets")
@@ -25,5 +27,10 @@ register_non_phase_key("custom_rulesets")
 from octorules_aws.linter import register_aws_linter  # noqa: E402
 
 register_aws_linter()
+
+# Register audit IP extractor.
+from octorules_aws.audit import register_aws_audit  # noqa: E402
+
+register_aws_audit()
 
 __all__ = ["AwsWafProvider", "validate_rules"]

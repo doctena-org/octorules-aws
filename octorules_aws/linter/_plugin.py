@@ -9,18 +9,12 @@ from typing import Any
 from octorules.linter.engine import LintContext, LintResult, Severity
 from octorules.phases import PHASE_BY_NAME
 
+from octorules_aws import AWS_PHASE_NAMES
 from octorules_aws.linter._rules import AWS_RULE_METAS
 from octorules_aws.validate import _estimate_rule_wcu, validate_rules
 
-# Phase names owned by this provider.
-_AWS_PHASE_NAMES = frozenset(
-    {
-        "aws_waf_custom_rules",
-        "aws_waf_rate_rules",
-        "aws_waf_managed_rules",
-        "aws_waf_rule_group_rules",
-    }
-)
+# Re-export for backward compatibility
+_AWS_PHASE_NAMES = AWS_PHASE_NAMES
 
 AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
 

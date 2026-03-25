@@ -74,6 +74,7 @@ Safety thresholds are configured under `safety:` (framework-owned, not forwarded
 | Page Shield | Not supported | — |
 | Zone discovery (`list_zones`) | Supported | Lists Web ACLs |
 | Account-level scopes | Not supported | — |
+| Audit IP extraction (`octorules audit`) | Supported | IPSet reference resolution |
 
 ## Phase mapping
 
