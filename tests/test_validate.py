@@ -3137,3 +3137,27 @@ class TestResultFactory:
         )
         assert r.field == "action"
         assert r.suggestion == "use block"
+
+
+class TestIsStrictInt:
+    """_is_strict_int rejects bools and non-int types."""
+
+    def test_int_is_strict(self):
+        from octorules_aws.validate import _is_strict_int
+
+        assert _is_strict_int(0) is True
+        assert _is_strict_int(42) is True
+        assert _is_strict_int(-1) is True
+
+    def test_bool_is_not_strict_int(self):
+        from octorules_aws.validate import _is_strict_int
+
+        assert _is_strict_int(True) is False
+        assert _is_strict_int(False) is False
+
+    def test_non_int_is_not_strict_int(self):
+        from octorules_aws.validate import _is_strict_int
+
+        assert _is_strict_int("42") is False
+        assert _is_strict_int(3.14) is False
+        assert _is_strict_int(None) is False

@@ -441,7 +441,10 @@ class AwsWafProvider:
             VisibilityConfig=vis,
         )
         summary = response.get("Summary", {})
-        return {"id": summary.get("Id", ""), "name": summary.get("Name", "")}
+        ruleset_id = summary.get("Id", "")
+        if not ruleset_id:
+            raise ProviderError(f"create_rule_group response missing Summary.Id (name={name!r})")
+        return {"id": ruleset_id, "name": summary.get("Name", name)}
 
     @_wrap_provider_errors
     def delete_custom_ruleset(self, scope: Scope, ruleset_id: str) -> None:
@@ -552,10 +555,10 @@ class AwsWafProvider:
             Description=description,
         )
         summary = response.get("Summary", {})
-        return {
-            "id": summary.get("Id", ""),
-            "name": summary.get("Name", name),
-        }
+        list_id = summary.get("Id", "")
+        if not list_id:
+            raise ProviderError(f"create_ip_set response missing Summary.Id (name={name!r})")
+        return {"id": list_id, "name": summary.get("Name", name)}
 
     @_wrap_provider_errors
     def delete_list(self, scope: Scope, list_id: str) -> None:

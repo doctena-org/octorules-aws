@@ -2,41 +2,13 @@
 
 from __future__ import annotations
 
-import re
-
 from octorules.audit import RuleIPInfo
 from octorules.extensions import register_audit_extension
 from octorules.phases import PHASE_BY_NAME
 
 from octorules_aws import AWS_PHASE_NAMES
-
-# ARN pattern to extract IP Set name
-_IPSET_ARN_RE = re.compile(r"^arn:aws[\w-]*:wafv2:[^:]+:[^:]+:[^/]+/ipset/([^/]+)/[^/]+$")
-
-
-def _collect_ipset_arns(stmt: dict) -> list[str]:
-    """Recursively collect IPSetReferenceStatement ARNs from a statement tree."""
-    arns: list[str] = []
-    for stype, inner in stmt.items():
-        if stype == "IPSetReferenceStatement" and isinstance(inner, dict):
-            arn = inner.get("ARN")
-            if isinstance(arn, str):
-                arns.append(arn)
-        elif stype in ("AndStatement", "OrStatement") and isinstance(inner, dict):
-            stmts = inner.get("Statements", [])
-            if isinstance(stmts, list):
-                for s in stmts:
-                    if isinstance(s, dict):
-                        arns.extend(_collect_ipset_arns(s))
-        elif stype == "NotStatement" and isinstance(inner, dict):
-            nested = inner.get("Statement")
-            if isinstance(nested, dict):
-                arns.extend(_collect_ipset_arns(nested))
-        elif stype == "RateBasedStatement" and isinstance(inner, dict):
-            sds = inner.get("ScopeDownStatement")
-            if isinstance(sds, dict):
-                arns.extend(_collect_ipset_arns(sds))
-    return arns
+from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
+from octorules_aws._statement_util import collect_ipset_arns as _collect_ipset_arns
 
 
 def _extract_ips(rules_data: dict, phase_name: str) -> list[RuleIPInfo]:

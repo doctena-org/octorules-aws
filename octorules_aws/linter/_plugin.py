@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
 from octorules.phases import PHASE_BY_NAME
 
 from octorules_aws import AWS_PHASE_NAMES
+from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
+from octorules_aws._statement_util import collect_ipset_arns as _collect_ipset_arns_from_statement
 from octorules_aws.linter._rules import AWS_RULE_METAS
 from octorules_aws.validate import _estimate_rule_wcu, validate_rules
 
@@ -20,10 +21,6 @@ AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
 
 # Default Web ACL WCU limit
 _WCU_LIMIT = 1500
-
-# ARN pattern to extract IP Set name:
-# arn:aws:wafv2:REGION:ACCOUNT:SCOPE/ipset/NAME/ID
-_IPSET_ARN_RE = re.compile(r"^arn:aws[\w-]*:wafv2:[^:]+:[^:]+:[^/]+/ipset/([^/]+)/[^/]+$")
 
 
 def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -151,31 +148,6 @@ def _check_wcu_capacity(rules_data: dict[str, Any], ctx: LintContext) -> None:
                 phase=result_phase,
             )
         )
-
-
-def _collect_ipset_arns_from_statement(stmt: dict) -> list[str]:
-    """Recursively collect all IPSetReferenceStatement ARNs from a statement tree."""
-    arns: list[str] = []
-    for stype, inner in stmt.items():
-        if stype == "IPSetReferenceStatement" and isinstance(inner, dict):
-            arn = inner.get("ARN")
-            if isinstance(arn, str):
-                arns.append(arn)
-        elif stype in ("AndStatement", "OrStatement") and isinstance(inner, dict):
-            stmts = inner.get("Statements", [])
-            if isinstance(stmts, list):
-                for s in stmts:
-                    if isinstance(s, dict):
-                        arns.extend(_collect_ipset_arns_from_statement(s))
-        elif stype == "NotStatement" and isinstance(inner, dict):
-            nested = inner.get("Statement")
-            if isinstance(nested, dict):
-                arns.extend(_collect_ipset_arns_from_statement(nested))
-        elif stype == "RateBasedStatement" and isinstance(inner, dict):
-            sds = inner.get("ScopeDownStatement")
-            if isinstance(sds, dict):
-                arns.extend(_collect_ipset_arns_from_statement(sds))
-    return arns
 
 
 def _check_ipset_references(rules_data: dict[str, Any], ctx: LintContext) -> None:

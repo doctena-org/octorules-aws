@@ -323,6 +323,13 @@ class TestRuleGroups:
         assert len(rules) == 1
         assert rules[0]["ref"] == "rule-1"
 
+    def test_create_custom_ruleset_raises_on_missing_id(self, mock_waf_client):
+        """create_custom_ruleset raises ProviderError when Summary.Id is missing."""
+        mock_waf_client.create_rule_group.return_value = {"Summary": {}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match=r"missing Summary\.Id"):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
     def test_put_custom_ruleset(self, mock_waf_client):
         mock_waf_client.list_rule_groups.return_value = {
             "RuleGroups": [{"Id": "rg-1", "Name": "my-group"}]
@@ -360,6 +367,20 @@ class TestIPSets:
         assert result["id"] == "ip-new"
         call_kwargs = mock_waf_client.create_ip_set.call_args[1]
         assert call_kwargs["IPAddressVersion"] == "IPV4"
+
+    def test_create_list_raises_on_missing_id(self, mock_waf_client):
+        """create_list raises ProviderError when Summary.Id is missing."""
+        mock_waf_client.create_ip_set.return_value = {"Summary": {}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match=r"missing Summary\.Id"):
+            provider.create_list(_zs(), "new-set", "ip")
+
+    def test_create_list_raises_on_empty_summary(self, mock_waf_client):
+        """create_list raises ProviderError when Summary is absent."""
+        mock_waf_client.create_ip_set.return_value = {}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match=r"missing Summary\.Id"):
+            provider.create_list(_zs(), "new-set", "ip")
 
     def test_create_list_ipv6(self, mock_waf_client):
         mock_waf_client.create_ip_set.return_value = {"Summary": {"Id": "ip-v6", "Name": "v6-set"}}
@@ -1237,3 +1258,106 @@ class TestConcurrentWorkers:
             assert results[name] == f"id-{name}"
         # All metadata populated (accessed under lock)
         assert len(provider._web_acl_meta) == 10
+
+
+class TestCreateListErrorWrapping:
+    """boto3 ClientError from create_ip_set is wrapped by _wrap_provider_errors."""
+
+    def test_client_error_wrapped(self, mock_waf_client):
+        """ClientError from create_ip_set is wrapped as ProviderError."""
+        mock_waf_client.create_ip_set.side_effect = _make_client_error(
+            "WAFInternalErrorException", "Internal error"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="Internal error"):
+            provider.create_list(_zs(), "test", "ip")
+
+    def test_auth_error_wrapped(self, mock_waf_client):
+        """AccessDeniedException from create_ip_set is wrapped as ProviderAuthError."""
+        mock_waf_client.create_ip_set.side_effect = _make_client_error(
+            "AccessDeniedException", "Access denied"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.create_list(_zs(), "test", "ip")
+
+    def test_duplicate_name_error(self, mock_waf_client):
+        """WAFDuplicateItemException is wrapped as ProviderError."""
+        mock_waf_client.create_ip_set.side_effect = _make_client_error(
+            "WAFDuplicateItemException", "already exists"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="already exists"):
+            provider.create_list(_zs(), "test", "ip")
+
+    def test_limit_exceeded(self, mock_waf_client):
+        """WAFLimitsExceededException is wrapped as ProviderError."""
+        mock_waf_client.create_ip_set.side_effect = _make_client_error(
+            "WAFLimitsExceededException", "Quota exceeded"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="Quota exceeded"):
+            provider.create_list(_zs(), "test", "ip")
+
+    def test_expired_token_wrapped(self, mock_waf_client):
+        """ExpiredTokenException from create_ip_set is wrapped as ProviderAuthError."""
+        mock_waf_client.create_ip_set.side_effect = _make_client_error(
+            "ExpiredTokenException", "Token expired"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.create_list(_zs(), "test", "ip")
+
+    def test_no_credentials_wrapped(self, mock_waf_client):
+        """NoCredentialsError from create_ip_set is wrapped as ProviderAuthError."""
+        mock_waf_client.create_ip_set.side_effect = NoCredentialsError()
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.create_list(_zs(), "test", "ip")
+
+
+class TestCreateCustomRulesetErrorWrapping:
+    """boto3 ClientError from create_rule_group is wrapped by _wrap_provider_errors."""
+
+    def test_client_error_wrapped(self, mock_waf_client):
+        """ClientError from create_rule_group is wrapped as ProviderError."""
+        mock_waf_client.create_rule_group.side_effect = _make_client_error(
+            "WAFInternalErrorException", "Internal error"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="Internal error"):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
+    def test_auth_error_wrapped(self, mock_waf_client):
+        """AccessDeniedException from create_rule_group is wrapped as ProviderAuthError."""
+        mock_waf_client.create_rule_group.side_effect = _make_client_error(
+            "AccessDeniedException", "Access denied"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
+    def test_duplicate_name_error(self, mock_waf_client):
+        """WAFDuplicateItemException is wrapped as ProviderError."""
+        mock_waf_client.create_rule_group.side_effect = _make_client_error(
+            "WAFDuplicateItemException", "already exists"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="already exists"):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
+    def test_limit_exceeded(self, mock_waf_client):
+        """WAFLimitsExceededException is wrapped as ProviderError."""
+        mock_waf_client.create_rule_group.side_effect = _make_client_error(
+            "WAFLimitsExceededException", "Quota exceeded"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="Quota exceeded"):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
+    def test_no_credentials_wrapped(self, mock_waf_client):
+        """NoCredentialsError from create_rule_group is wrapped as ProviderAuthError."""
+        mock_waf_client.create_rule_group.side_effect = NoCredentialsError()
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)

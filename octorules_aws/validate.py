@@ -29,6 +29,11 @@ def _result(
     )
 
 
+def _is_strict_int(val: object) -> bool:
+    """True if *val* is an int but not a bool."""
+    return isinstance(val, int) and not isinstance(val, bool)
+
+
 _VALID_ACTIONS = frozenset({"Allow", "Block", "Count", "Captcha", "Challenge"})
 _VALID_OVERRIDE_ACTIONS = frozenset({"None", "Count"})
 
@@ -325,7 +330,7 @@ def _check_priority(
         )
         return
     pri = rule["Priority"]
-    if not isinstance(pri, int) or isinstance(pri, bool) or pri < 0:
+    if not _is_strict_int(pri) or pri < 0:
         results.append(
             _result(
                 rule_id="WA100",
@@ -376,7 +381,7 @@ def _check_visibility(
             val = vc[fname]
             ok = isinstance(val, ftype)
             # int is a parent of bool in Python — reject bare ints for bool fields
-            if ftype is bool and isinstance(val, int) and not isinstance(val, bool):
+            if ftype is bool and _is_strict_int(val):
                 ok = False
             if not ok:
                 results.append(
@@ -672,7 +677,7 @@ def _check_rate_based(
 
     if "Limit" in rbs:
         lim = rbs["Limit"]
-        if not isinstance(lim, int) or isinstance(lim, bool):
+        if not _is_strict_int(lim):
             results.append(
                 _result(
                     rule_id="WA303",
@@ -906,7 +911,7 @@ def _check_statement_fields(
         # WA334: SizeConstraintStatement.Size must be non-negative
         if stype == "SizeConstraintStatement" and "Size" in inner:
             size_val = inner["Size"]
-            if isinstance(size_val, int) and not isinstance(size_val, bool) and size_val < 0:
+            if _is_strict_int(size_val) and size_val < 0:
                 results.append(
                     _result(
                         rule_id="WA334",
@@ -1228,7 +1233,7 @@ def _check_text_transformations(
     for i, elem in enumerate(tt):
         if isinstance(elem, dict):
             pri = elem.get("Priority")
-            if isinstance(pri, int) and not isinstance(pri, bool):
+            if _is_strict_int(pri):
                 if pri in seen_priorities:
                     results.append(
                         _result(
@@ -1267,7 +1272,7 @@ def _check_text_transformations(
                     field=f"{field_prefix}[{i}].Priority",
                 )
             )
-        elif not isinstance(elem["Priority"], int) or isinstance(elem["Priority"], bool):
+        elif not _is_strict_int(elem["Priority"]):
             results.append(
                 _result(
                     rule_id="WA317",

@@ -4,7 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.5.3] - 2026-03-30
+
+### Added
+- Response validation for `create_list()` and `create_custom_ruleset()` —
+  raises `ProviderError` if API response lacks expected ID.
+
+### Changed
+- IPSet ARN collection extracted to shared `_statement_util` module (removes
+  duplication between audit and linter).
+- Boolean-as-int validation uses `_is_strict_int()` helper for consistency.
 
 ## [0.5.2] - 2026-03-30
 
