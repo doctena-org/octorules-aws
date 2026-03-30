@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-03-30
+
+### Changed
+- Extract `_result()` factory helper in `validate.py` to reduce
+  `LintResult` boilerplate across 72 call sites.
+
 ## [0.5.1] - 2026-03-30
 
 ### Changed

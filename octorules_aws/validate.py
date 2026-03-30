@@ -6,6 +6,29 @@ import re
 
 from octorules.linter.engine import LintResult, Severity
 
+
+def _result(
+    rule_id: str,
+    severity: Severity,
+    message: str,
+    phase: str,
+    ref: str = "",
+    *,
+    field: str = "",
+    suggestion: str = "",
+) -> LintResult:
+    """Create a LintResult with common defaults."""
+    return LintResult(
+        rule_id=rule_id,
+        severity=severity,
+        message=message,
+        phase=phase,
+        ref=ref,
+        field=field,
+        suggestion=suggestion,
+    )
+
+
 _VALID_ACTIONS = frozenset({"Allow", "Block", "Count", "Captcha", "Challenge"})
 _VALID_OVERRIDE_ACTIONS = frozenset({"None", "Count"})
 
@@ -176,7 +199,7 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
         ref = rule.get("ref", "")
         if not ref:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA001",
                     severity=Severity.ERROR,
                     message="Rule missing 'ref'",
@@ -190,7 +213,7 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
             seen_refs[ref_str] = seen_refs.get(ref_str, 0) + 1
             if seen_refs[ref_str] == 2:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA022",
                         severity=Severity.ERROR,
                         message=f"Duplicate ref {ref_str!r}",
@@ -222,7 +245,7 @@ def _check_unknown_fields(rule: dict, results: list[LintResult], phase: str, ref
     unknown = set(rule) - _VALID_RULE_FIELDS
     for field in sorted(unknown):
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA020",
                 severity=Severity.WARNING,
                 message=f"Unknown top-level rule field: '{field}'",
@@ -240,7 +263,7 @@ def _check_enabled(rule: dict, results: list[LintResult], phase: str, ref: str) 
     """WA600: Inform when a rule has enabled: false."""
     if rule.get("enabled") is False:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA600",
                 severity=Severity.INFO,
                 message="Rule is disabled (enabled: false)",
@@ -261,7 +284,7 @@ def _check_ref_format(ref: str, results: list[LintResult], phase: str) -> None:
         return
     if len(ref) > _MAX_NAME_LEN:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA010",
                 severity=Severity.ERROR,
                 message=f"ref exceeds {_MAX_NAME_LEN} characters ({len(ref)})",
@@ -272,7 +295,7 @@ def _check_ref_format(ref: str, results: list[LintResult], phase: str) -> None:
         )
     elif not _NAME_RE.fullmatch(ref):
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA010",
                 severity=Severity.ERROR,
                 message="ref contains invalid characters (allowed: A-Z, a-z, 0-9, _, -)",
@@ -292,7 +315,7 @@ def _check_priority(
 ) -> None:
     if "Priority" not in rule:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA002",
                 severity=Severity.ERROR,
                 message="Rule missing 'Priority'",
@@ -304,7 +327,7 @@ def _check_priority(
     pri = rule["Priority"]
     if not isinstance(pri, int) or isinstance(pri, bool) or pri < 0:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA100",
                 severity=Severity.ERROR,
                 message=f"Priority must be a non-negative integer, got {pri!r}",
@@ -327,7 +350,7 @@ def _check_visibility(
     """WA003/WA400/WA401/WA402 -- Validate VisibilityConfig fields and track metric names."""
     if "VisibilityConfig" not in rule:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA003",
                 severity=Severity.ERROR,
                 message="Rule missing 'VisibilityConfig'",
@@ -340,7 +363,7 @@ def _check_visibility(
     for fname, ftype in _VISIBILITY_FIELDS.items():
         if fname not in vc:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA400",
                     severity=Severity.ERROR,
                     message=f"VisibilityConfig missing required field '{fname}'",
@@ -357,7 +380,7 @@ def _check_visibility(
                 ok = False
             if not ok:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA401",
                         severity=Severity.ERROR,
                         message=(
@@ -373,7 +396,7 @@ def _check_visibility(
     if isinstance(mn, str):
         if len(mn) > _MAX_NAME_LEN:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA402",
                     severity=Severity.ERROR,
                     message=f"MetricName exceeds {_MAX_NAME_LEN} characters ({len(mn)})",
@@ -391,7 +414,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
 
     if not has_action and not has_override:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA004",
                 severity=Severity.ERROR,
                 message="Rule must have either 'Action' or 'OverrideAction'",
@@ -401,7 +424,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
         )
     if has_action and has_override:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA005",
                 severity=Severity.ERROR,
                 message="Rule must not have both 'Action' and 'OverrideAction'",
@@ -414,7 +437,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
         invalid = set(rule["Action"]) - _VALID_ACTIONS
         if invalid:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA200",
                     severity=Severity.ERROR,
                     message=f"Invalid Action type: {sorted(invalid)}",
@@ -429,7 +452,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
         invalid = set(rule["OverrideAction"]) - _VALID_OVERRIDE_ACTIONS
         if invalid:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA201",
                     severity=Severity.ERROR,
                     message=f"Invalid OverrideAction type: {sorted(invalid)}",
@@ -446,7 +469,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
     # WA021: Action/OverrideAction must be dict
     if "Action" in rule and not isinstance(rule["Action"], dict):
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA021",
                 severity=Severity.ERROR,
                 message=f"Action must be a dict, got {type(rule['Action']).__name__}",
@@ -457,7 +480,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
         )
     if "OverrideAction" in rule and not isinstance(rule["OverrideAction"], dict):
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA021",
                 severity=Severity.ERROR,
                 message=(
@@ -474,7 +497,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
         action = rule["Action"]
         if len(action) != 1:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA350",
                     severity=Severity.ERROR,
                     message=(
@@ -490,7 +513,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
         for key in action:
             if key not in _VALID_ACTIONS:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA351",
                         severity=Severity.ERROR,
                         message=f"Unknown action type: '{key}'",
@@ -515,7 +538,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
                         or code > 599
                     ):
                         results.append(
-                            LintResult(
+                            _result(
                                 rule_id="WA353",
                                 severity=Severity.ERROR,
                                 message=(
@@ -532,7 +555,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
         override = rule["OverrideAction"]
         if len(override) != 1:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA350",
                     severity=Severity.ERROR,
                     message=(
@@ -552,7 +575,7 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
             stmt_types = set(stmt.keys())
             if not (stmt_types & _GROUP_STATEMENT_TYPES):
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA352",
                         severity=Severity.WARNING,
                         message=(
@@ -589,7 +612,7 @@ def _validate_statement(
 
     if len(keys) != 1:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA300",
                 severity=Severity.ERROR,
                 message=f"Statement must have exactly one type, found {len(keys)}: {sorted(keys)}",
@@ -602,7 +625,7 @@ def _validate_statement(
     for k in keys:
         if k not in _KNOWN_STATEMENT_TYPES:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA301",
                     severity=Severity.WARNING,
                     message=f"Unknown statement type: {k}",
@@ -651,7 +674,7 @@ def _check_rate_based(
         lim = rbs["Limit"]
         if not isinstance(lim, int) or isinstance(lim, bool):
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
                     message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
@@ -662,7 +685,7 @@ def _check_rate_based(
             )
         elif lim < 10:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
                     message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
@@ -673,7 +696,7 @@ def _check_rate_based(
             )
         elif lim > _MAX_RATE_LIMIT:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA306",
                     severity=Severity.ERROR,
                     message=(
@@ -687,7 +710,7 @@ def _check_rate_based(
 
     if "AggregateKeyType" not in rbs:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA304",
                 severity=Severity.ERROR,
                 message="RateBasedStatement missing 'AggregateKeyType'",
@@ -700,7 +723,7 @@ def _check_rate_based(
         akt = rbs["AggregateKeyType"]
         if akt not in _VALID_AGGREGATE_KEY_TYPES:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA305",
                     severity=Severity.ERROR,
                     message=f"Invalid AggregateKeyType: {akt!r}",
@@ -714,7 +737,7 @@ def _check_rate_based(
     # WA309: RateBasedStatement without ScopeDownStatement
     if "ScopeDownStatement" not in rbs:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA309",
                 severity=Severity.WARNING,
                 message="RateBasedStatement without ScopeDownStatement rate-limits all traffic",
@@ -743,7 +766,7 @@ def _check_byte_match(
     for field in _BYTE_MATCH_REQUIRED:
         if field not in bms:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA312",
                     severity=Severity.ERROR,
                     message=f"ByteMatchStatement missing required field '{field}'",
@@ -759,7 +782,7 @@ def _check_byte_match(
         byte_len = len(search_string.encode("utf-8"))
         if byte_len > _MAX_SEARCH_STRING_BYTES:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA307",
                     severity=Severity.ERROR,
                     message=(
@@ -787,7 +810,7 @@ def _check_geo_match(
     # WA323: CountryCodes list length
     if isinstance(codes, list) and len(codes) > _MAX_GEO_COUNTRY_CODES:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA323",
                 severity=Severity.ERROR,
                 message=(
@@ -803,7 +826,7 @@ def _check_geo_match(
     for code in codes:
         if not isinstance(code, str) or not _COUNTRY_CODE_RE.fullmatch(code):
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA313",
                     severity=Severity.WARNING,
                     message=f"Invalid country code: {code!r} (expected ISO 3166-1 alpha-2)",
@@ -834,7 +857,7 @@ def _check_statement_fields(
             for field in required:
                 if field not in inner:
                     results.append(
-                        LintResult(
+                        _result(
                             rule_id="WA314",
                             severity=Severity.ERROR,
                             message=f"{stype} missing required field '{field}'",
@@ -852,7 +875,7 @@ def _check_statement_fields(
                     re.compile(regex_str)
                 except re.error as exc:
                     results.append(
-                        LintResult(
+                        _result(
                             rule_id="WA319",
                             severity=Severity.ERROR,
                             message=f"Invalid regex pattern: {exc}",
@@ -867,7 +890,7 @@ def _check_statement_fields(
                 byte_len = len(regex_str.encode("utf-8"))
                 if byte_len > _MAX_REGEX_STRING_BYTES:
                     results.append(
-                        LintResult(
+                        _result(
                             rule_id="WA308",
                             severity=Severity.ERROR,
                             message=(
@@ -885,7 +908,7 @@ def _check_statement_fields(
             size_val = inner["Size"]
             if isinstance(size_val, int) and not isinstance(size_val, bool) and size_val < 0:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA334",
                         severity=Severity.ERROR,
                         message=(
@@ -925,7 +948,7 @@ def _check_statement_enums(
         val = inner["PositionalConstraint"]
         if val not in _VALID_POSITIONAL_CONSTRAINTS:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA315",
                     severity=Severity.ERROR,
                     message=f"Invalid PositionalConstraint: {val!r}",
@@ -940,7 +963,7 @@ def _check_statement_enums(
         val = inner["ComparisonOperator"]
         if val not in _VALID_COMPARISON_OPERATORS:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA315",
                     severity=Severity.ERROR,
                     message=f"Invalid ComparisonOperator: {val!r}",
@@ -955,7 +978,7 @@ def _check_statement_enums(
         val = inner["Scope"]
         if val not in _VALID_LABEL_SCOPES:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA315",
                     severity=Severity.ERROR,
                     message=f"Invalid LabelMatchStatement.Scope: {val!r}",
@@ -970,7 +993,7 @@ def _check_statement_enums(
         val = inner["SensitivityLevel"]
         if val not in _VALID_SENSITIVITY_LEVELS:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA315",
                     severity=Severity.ERROR,
                     message=f"Invalid SensitivityLevel: {val!r}",
@@ -994,7 +1017,7 @@ def _check_field_to_match(
 
     if len(ftm) != 1:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA316",
                 severity=Severity.ERROR,
                 message=(f"FieldToMatch must have exactly 1 key, found {len(ftm)}: {sorted(ftm)}"),
@@ -1007,7 +1030,7 @@ def _check_field_to_match(
     for key in ftm:
         if key not in _VALID_FIELD_TO_MATCH_KEYS:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA316",
                     severity=Severity.ERROR,
                     message=f"Unknown FieldToMatch key: '{key}'",
@@ -1023,7 +1046,7 @@ def _check_field_to_match(
         sh = ftm["SingleHeader"]
         if isinstance(sh, dict) and "Name" not in sh:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA316",
                     severity=Severity.ERROR,
                     message="SingleHeader requires a 'Name' field",
@@ -1037,7 +1060,7 @@ def _check_field_to_match(
         sqa = ftm["SingleQueryArgument"]
         if isinstance(sqa, dict) and "Name" not in sqa:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA316",
                     severity=Severity.ERROR,
                     message="SingleQueryArgument requires a 'Name' field",
@@ -1066,7 +1089,7 @@ def _check_field_to_match(
                             and len(pat_list) > _MAX_MATCH_PATTERN_ENTRIES
                         ):
                             results.append(
-                                LintResult(
+                                _result(
                                     rule_id="WA325",
                                     severity=Severity.ERROR,
                                     message=(
@@ -1086,7 +1109,7 @@ def _check_field_to_match(
             for required_field in ("MatchScope", "InvalidFallbackBehavior"):
                 if required_field not in jb:
                     results.append(
-                        LintResult(
+                        _result(
                             rule_id="WA316",
                             severity=Severity.ERROR,
                             message=f"JsonBody requires '{required_field}' field",
@@ -1100,7 +1123,7 @@ def _check_field_to_match(
             ms = jb.get("MatchScope")
             if isinstance(ms, str) and ms not in _VALID_MATCH_SCOPES:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA335",
                         severity=Severity.ERROR,
                         message=(
@@ -1118,7 +1141,7 @@ def _check_field_to_match(
             ifb = jb.get("InvalidFallbackBehavior")
             if isinstance(ifb, str) and ifb not in _VALID_INVALID_FALLBACK_BEHAVIORS:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA336",
                         severity=Severity.ERROR,
                         message=(
@@ -1136,7 +1159,7 @@ def _check_field_to_match(
     # WA320: FieldToMatch type incompatible with statement type
     if "JsonBody" in ftm and stype not in _JSONBODY_STATEMENT_TYPES:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA320",
                 severity=Severity.WARNING,
                 message=f"FieldToMatch type 'JsonBody' is not applicable to {stype}",
@@ -1160,7 +1183,7 @@ def _check_text_transformations(
 
     if not isinstance(tt, list):
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA317",
                 severity=Severity.ERROR,
                 message=f"TextTransformations must be a list, got {type(tt).__name__}",
@@ -1173,7 +1196,7 @@ def _check_text_transformations(
 
     if len(tt) == 0:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA317",
                 severity=Severity.ERROR,
                 message="TextTransformations must not be empty",
@@ -1187,7 +1210,7 @@ def _check_text_transformations(
     # WA331: TextTransformations count limit
     if len(tt) > _MAX_TEXT_TRANSFORMATIONS:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA331",
                 severity=Severity.ERROR,
                 message=(
@@ -1208,7 +1231,7 @@ def _check_text_transformations(
             if isinstance(pri, int) and not isinstance(pri, bool):
                 if pri in seen_priorities:
                     results.append(
-                        LintResult(
+                        _result(
                             rule_id="WA332",
                             severity=Severity.ERROR,
                             message=f"Duplicate TextTransformation Priority {pri}",
@@ -1223,7 +1246,7 @@ def _check_text_transformations(
     for i, elem in enumerate(tt):
         if not isinstance(elem, dict):
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=f"TextTransformations[{i}] must be a dict, got {type(elem).__name__}",
@@ -1235,7 +1258,7 @@ def _check_text_transformations(
             continue
         if "Priority" not in elem:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=f"TextTransformations[{i}] missing required field 'Priority'",
@@ -1246,7 +1269,7 @@ def _check_text_transformations(
             )
         elif not isinstance(elem["Priority"], int) or isinstance(elem["Priority"], bool):
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=(
@@ -1260,7 +1283,7 @@ def _check_text_transformations(
             )
         if "Type" not in elem:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=f"TextTransformations[{i}] missing required field 'Type'",
@@ -1271,7 +1294,7 @@ def _check_text_transformations(
             )
         elif not isinstance(elem["Type"], str):
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=(
@@ -1285,7 +1308,7 @@ def _check_text_transformations(
             )
         elif elem["Type"] not in _VALID_TEXT_TRANSFORM_TYPES:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA317",
                     severity=Severity.ERROR,
                     message=f"Invalid TextTransformation type: {elem['Type']!r}",
@@ -1310,7 +1333,7 @@ def _check_rate_based_conditional(
         custom_keys = inner.get("CustomKeys")
         if not isinstance(custom_keys, list) or len(custom_keys) == 0:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA318",
                     severity=Severity.ERROR,
                     message=(
@@ -1324,7 +1347,7 @@ def _check_rate_based_conditional(
             )
         elif isinstance(custom_keys, list) and len(custom_keys) > _MAX_CUSTOM_KEYS:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA324",
                     severity=Severity.ERROR,
                     message=(
@@ -1340,7 +1363,7 @@ def _check_rate_based_conditional(
     if akt == "FORWARDED_IP":
         if "ForwardedIPConfig" not in inner:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA318",
                     severity=Severity.ERROR,
                     message=(
@@ -1369,7 +1392,7 @@ def _check_compound(
         return
     if len(stmts) < 2:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA310",
                 severity=Severity.ERROR,
                 message=f"{name} must have at least 2 nested statements, found {len(stmts)}",
@@ -1395,7 +1418,7 @@ def _check_not(
     nested = inner.get("Statement")
     if nested is None:
         results.append(
-            LintResult(
+            _result(
                 rule_id="WA311",
                 severity=Severity.ERROR,
                 message="NotStatement missing required 'Statement' field",
@@ -1408,7 +1431,7 @@ def _check_not(
         # WA321: Redundant double negation
         if "NotStatement" in nested:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA321",
                     severity=Severity.WARNING,
                     message="Redundant double negation — NotStatement wrapping NotStatement",
@@ -1435,7 +1458,7 @@ def _check_arns(
         for key, val in obj.items():
             if isinstance(val, str) and val.startswith("arn:") and not _ARN_RE.match(val):
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA302",
                         severity=Severity.WARNING,
                         message=f"ARN doesn't match expected 'arn:aws*:wafv2:' format: {val}",
@@ -1559,7 +1582,7 @@ def _check_heuristic_patterns(
             codes = inner.get("CountryCodes", [])
             if isinstance(codes, list) and len(codes) >= _GEO_ALWAYS_TRUE_THRESHOLD:
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA341",
                         severity=Severity.WARNING,
                         message=(
@@ -1584,7 +1607,7 @@ def _check_heuristic_patterns(
                 and comp_op == "LT"
             ):
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA343",
                         severity=Severity.WARNING,
                         message=(
@@ -1650,7 +1673,7 @@ def _check_contradictory_geo(
         for j in range(i + 1, len(geo_sets)):
             if geo_sets[i] and geo_sets[j] and not (geo_sets[i] & geo_sets[j]):
                 results.append(
-                    LintResult(
+                    _result(
                         rule_id="WA342",
                         severity=Severity.WARNING,
                         message=(
@@ -1678,7 +1701,7 @@ def _check_duplicate_priorities(
     for pri, refs in sorted(seen.items()):
         if len(refs) > 1:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA101",
                     severity=Severity.ERROR,
                     message=f"Duplicate Priority {pri} in rules: {', '.join(refs)}",
@@ -1695,7 +1718,7 @@ def _check_duplicate_metrics(
     for name, refs in sorted(seen.items()):
         if len(refs) > 1:
             results.append(
-                LintResult(
+                _result(
                     rule_id="WA500",
                     severity=Severity.ERROR,
                     message=f"Duplicate MetricName '{name}' in rules: {', '.join(refs)}",

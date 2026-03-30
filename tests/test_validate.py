@@ -3091,3 +3091,49 @@ class TestWcuEstimation:
 
         stmt = {"FutureNewStatement": {"SomeField": "value"}}
         assert _estimate_wcu(stmt) == 1
+
+
+class TestResultFactory:
+    """Tests for the _result() LintResult factory helper."""
+
+    def test_creates_lint_result_with_required_fields(self):
+        """Factory returns a LintResult with all required fields set."""
+        from octorules.linter.engine import LintResult, Severity
+
+        from octorules_aws.validate import _result
+
+        r = _result("WA001", Severity.ERROR, "test message", "custom_rules", "ref1")
+        assert isinstance(r, LintResult)
+        assert r.rule_id == "WA001"
+        assert r.severity == Severity.ERROR
+        assert r.message == "test message"
+        assert r.phase == "custom_rules"
+        assert r.ref == "ref1"
+
+    def test_default_optional_fields(self):
+        """Factory defaults field and suggestion to empty strings."""
+        from octorules.linter.engine import Severity
+
+        from octorules_aws.validate import _result
+
+        r = _result("WA002", Severity.WARNING, "msg", "rate_based")
+        assert r.ref == ""
+        assert r.field == ""
+        assert r.suggestion == ""
+
+    def test_optional_fields_passthrough(self):
+        """Factory passes field and suggestion through to LintResult."""
+        from octorules.linter.engine import Severity
+
+        from octorules_aws.validate import _result
+
+        r = _result(
+            "WA003",
+            Severity.INFO,
+            "msg",
+            "managed",
+            field="action",
+            suggestion="use block",
+        )
+        assert r.field == "action"
+        assert r.suggestion == "use block"
