@@ -561,6 +561,29 @@ class TestPagination:
         assert result[1]["id"] == "ip-2"
         assert mock_waf_client.list_ip_sets.call_count == 2
 
+    def test_repeated_marker_breaks_loop(self, mock_waf_client, caplog):
+        """Repeated NextMarker triggers loop detection and breaks."""
+        import logging
+
+        mock_waf_client.list_web_acls.side_effect = [
+            {
+                "WebACLs": [{"Name": "acl-1", "Id": "id-1", "ARN": "arn:1"}],
+                "NextMarker": "same-marker",
+            },
+            {
+                "WebACLs": [{"Name": "acl-2", "Id": "id-2", "ARN": "arn:2"}],
+                "NextMarker": "same-marker",  # Repeated!
+            },
+        ]
+        provider = AwsWafProvider(client=mock_waf_client)
+        with caplog.at_level(logging.WARNING):
+            acls = provider._paginate_list(mock_waf_client.list_web_acls, "WebACLs")
+        # Should have results from both pages (2nd page fetched before detecting repeat)
+        assert len(acls) == 2
+        assert "Pagination loop detected" in caplog.text
+        # 2 calls: first page + second page (loop detected on 2nd marker)
+        assert mock_waf_client.list_web_acls.call_count == 2
+
     def test_single_page_no_marker(self, mock_waf_client):
         """Single-page response (no NextMarker) works without looping."""
         mock_waf_client.list_web_acls.return_value = {

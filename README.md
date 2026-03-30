@@ -210,6 +210,7 @@ cd octorules-aws
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
 ```
 
 ## License

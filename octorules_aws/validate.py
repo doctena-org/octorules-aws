@@ -214,7 +214,7 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
     return results
 
 
-# --- YAML structure checks (WA020–WA021) -----------------------------------
+# --- YAML structure checks (WA020-WA021) -----------------------------------
 
 
 def _check_unknown_fields(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
@@ -622,10 +622,10 @@ def _validate_statement(
     if "GeoMatchStatement" in stmt:
         _check_geo_match(stmt["GeoMatchStatement"], results, phase, ref)
 
-    # Deep validation (WA314–WA318)
+    # Deep validation (WA314-WA318)
     _check_statement_fields(stmt, results, phase, ref)
 
-    # Heuristic patterns (WA341–WA343) — non-recursive, has own recursion
+    # Heuristic patterns (WA341-WA343) — non-recursive, has own recursion
     _check_heuristic_patterns(stmt, results, phase, ref)
 
     # Recurse into compound statements
@@ -814,7 +814,7 @@ def _check_geo_match(
             )
 
 
-# --- Deep statement validation (WA314–WA318) --------------------------------
+# --- Deep statement validation (WA314-WA318) --------------------------------
 
 
 def _check_statement_fields(
@@ -823,7 +823,7 @@ def _check_statement_fields(
     phase: str,
     ref: str,
 ) -> None:
-    """WA314–WA318: Deep validation of statement-type-specific fields."""
+    """WA314-WA318: Deep validation of statement-type-specific fields."""
     for stype, inner in stmt.items():
         if not isinstance(inner, dict):
             continue

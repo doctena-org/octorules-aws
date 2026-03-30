@@ -10,7 +10,7 @@ def register_aws_linter() -> None:
 
     Safe to call multiple times -- subsequent calls are no-ops.
     """
-    global _registered  # noqa: PLW0603
+    global _registered
     if _registered:
         return
 

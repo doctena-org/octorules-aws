@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-30
+
+### Changed
+- `_paginate_list()` now guards against infinite loops by tracking seen
+  `NextMarker` values and breaking with a warning on repetition.
+- Extract `_find_resource()` helper from `_find_rule_group()` /
+  `_find_ip_set()` to eliminate DRY violation.
+
+### Added
+- Ruff `B` (bugbear) and `RUF` lint rule categories to `pyproject.toml`.
+- `yamllint` step in lint CI workflow (parity with core/cloudflare).
+- Pre-commit hook (`scripts/hooks/pre-commit`) for ruff lint + format.
+- Test for pagination loop detection (repeated `NextMarker`).
+- `Topic` classifiers and `Issues` URL in `pyproject.toml`.
+- Comprehensive `.gitignore` (aligned with core).
+
 ## [0.5.0] - 2026-03-25
 
 ### Added

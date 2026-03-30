@@ -215,12 +215,21 @@ class AwsWafProvider:
         """Paginate a list_* API call using NextMarker."""
         results: list[dict] = []
         kwargs: dict[str, str] = {"Scope": self._waf_scope}
+        seen_markers: set[str] = set()
         while True:
             response = api_method(**kwargs)
             results.extend(response.get(response_key, []))
             marker = response.get("NextMarker")
             if not marker:
                 break
+            if marker in seen_markers:
+                log.warning(
+                    "Pagination loop detected for %s: marker %r repeated",
+                    response_key,
+                    marker,
+                )
+                break
+            seen_markers.add(marker)
             kwargs["NextMarker"] = marker
         return results
 
@@ -489,21 +498,31 @@ class AwsWafProvider:
             }
         return results
 
-    def _find_rule_group(self, ruleset_id: str, *, _cache: list[dict] | None = None) -> dict:
-        """Look up rule group metadata by ID. Raises ConfigError if not found.
+    def _find_resource(
+        self,
+        resource_id: str,
+        api_method,
+        response_key: str,
+        label: str,
+        *,
+        _cache: list[dict] | None = None,
+    ) -> dict:
+        """Look up a resource by ID. Raises ConfigError if not found.
 
         When ``_cache`` is provided, the list API call is skipped and the
         cached metadata is searched instead.
         """
-        rg_list = (
-            _cache
-            if _cache is not None
-            else self._paginate_list(self._client.list_rule_groups, "RuleGroups")
+        items = _cache if _cache is not None else self._paginate_list(api_method, response_key)
+        for item in items:
+            if item.get("Id") == resource_id:
+                return item
+        raise ConfigError(f"{label} {resource_id!r} not found")
+
+    def _find_rule_group(self, ruleset_id: str, *, _cache: list[dict] | None = None) -> dict:
+        """Look up rule group metadata by ID. Raises ConfigError if not found."""
+        return self._find_resource(
+            ruleset_id, self._client.list_rule_groups, "RuleGroups", "Rule Group", _cache=_cache
         )
-        for rg in rg_list:
-            if rg.get("Id") == ruleset_id:
-                return rg
-        raise ConfigError(f"Rule Group {ruleset_id!r} not found")
 
     # -- IP Sets (lists) --
 
@@ -660,17 +679,7 @@ class AwsWafProvider:
         return results
 
     def _find_ip_set(self, list_id: str, *, _cache: list[dict] | None = None) -> dict:
-        """Look up IP Set metadata by ID. Raises ConfigError if not found.
-
-        When ``_cache`` is provided, the list API call is skipped and the
-        cached metadata is searched instead.
-        """
-        ip_list = (
-            _cache
-            if _cache is not None
-            else self._paginate_list(self._client.list_ip_sets, "IPSets")
+        """Look up IP Set metadata by ID. Raises ConfigError if not found."""
+        return self._find_resource(
+            list_id, self._client.list_ip_sets, "IPSets", "IP Set", _cache=_cache
         )
-        for ip_set in ip_list:
-            if ip_set.get("Id") == list_id:
-                return ip_set
-        raise ConfigError(f"IP Set {list_id!r} not found")
