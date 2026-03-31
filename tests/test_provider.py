@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 from octorules.provider.base import BaseProvider, Scope
@@ -183,7 +185,8 @@ class TestPutPhaseRules:
         count = provider.put_phase_rules(_zs(), "aws_waf_custom", [])
         assert count == 0
 
-    def test_retries_on_stale_lock(self, mock_waf_client, web_acl):
+    @patch("octorules_aws.provider.time.sleep")
+    def test_retries_on_stale_lock(self, _mock_sleep, mock_waf_client, web_acl):
         """WAFOptimisticLockException triggers re-GET and retry."""
         mock_waf_client.list_web_acls.return_value = {
             "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
@@ -206,7 +209,8 @@ class TestPutPhaseRules:
         # get_web_acl called once per attempt (re-GET on retry)
         assert mock_waf_client.get_web_acl.call_count == 2
 
-    def test_stale_lock_exhausted_raises(self, mock_waf_client, web_acl):
+    @patch("octorules_aws.provider.time.sleep")
+    def test_stale_lock_exhausted_raises(self, _mock_sleep, mock_waf_client, web_acl):
         """After max retries, the exception propagates."""
         mock_waf_client.list_web_acls.return_value = {
             "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
@@ -741,6 +745,18 @@ class TestPhaseRegistration:
         rg_phase = get_phase("aws_waf_rule_group_rules")
         assert rg_phase.provider_id == "aws_waf_rule_group"
 
+    def test_phase_ids_derived_from_phases(self):
+        from octorules_aws._phases import AWS_PHASE_IDS, AWS_PHASE_NAMES, AWS_PHASES
+
+        assert AWS_PHASE_IDS == {
+            "aws_waf_custom",
+            "aws_waf_rate",
+            "aws_waf_managed",
+            "aws_waf_rule_group",
+        }
+        assert AWS_PHASE_IDS == frozenset(p.provider_id for p in AWS_PHASES)
+        assert AWS_PHASE_NAMES == frozenset(p.friendly_name for p in AWS_PHASES)
+
 
 class TestAuthErrors:
     """Auth-related errors are wrapped as ProviderAuthError."""
@@ -826,7 +842,8 @@ class TestLockRetry:
         provider.resolve_zone_id("my-acl")
         return provider
 
-    def test_lock_retry_succeeds_on_second_attempt(self, mock_waf_client, web_acl):
+    @patch("octorules_aws.provider.time.sleep")
+    def test_lock_retry_succeeds_on_second_attempt(self, _mock_sleep, mock_waf_client, web_acl):
         """First attempt hits WAFOptimisticLockException, second succeeds."""
         provider = self._setup_provider(mock_waf_client, web_acl)
         mock_waf_client.update_web_acl.side_effect = [
@@ -839,7 +856,8 @@ class TestLockRetry:
         # Re-fetches the Web ACL on retry to get fresh LockToken
         assert mock_waf_client.get_web_acl.call_count == 2
 
-    def test_lock_retry_exhausted(self, mock_waf_client, web_acl):
+    @patch("octorules_aws.provider.time.sleep")
+    def test_lock_retry_exhausted(self, _mock_sleep, mock_waf_client, web_acl):
         """All 3 attempts hit WAFOptimisticLockException → raises ProviderError."""
         provider = self._setup_provider(mock_waf_client, web_acl)
         mock_waf_client.update_web_acl.side_effect = _make_client_error(
@@ -1361,3 +1379,215 @@ class TestCreateCustomRulesetErrorWrapping:
         provider = AwsWafProvider(client=mock_waf_client)
         with pytest.raises(ProviderAuthError):
             provider.create_custom_ruleset(_zs(), "rg-name", "phase", 100)
+
+
+class TestCreateCustomRulesetSuccess:
+    """Success-path tests for create_custom_ruleset."""
+
+    def test_success_returns_id_and_name(self, mock_waf_client):
+        """Successful create returns dict with id and name from Summary."""
+        mock_waf_client.create_rule_group.return_value = {
+            "Summary": {"Id": "rg-new-123", "Name": "my-new-group"}
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.create_custom_ruleset(
+            _zs(), "my-new-group", "phase", 200, "A description"
+        )
+        assert result == {"id": "rg-new-123", "name": "my-new-group"}
+
+    def test_correct_create_rule_group_args(self, mock_waf_client):
+        """Verify the correct arguments are passed to create_rule_group."""
+        mock_waf_client.create_rule_group.return_value = {
+            "Summary": {"Id": "rg-abc", "Name": "test-group"}
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.create_custom_ruleset(_zs(), "test-group", "phase", 150, "Test desc")
+
+        mock_waf_client.create_rule_group.assert_called_once()
+        call_kwargs = mock_waf_client.create_rule_group.call_args[1]
+        assert call_kwargs["Name"] == "test-group"
+        assert call_kwargs["Scope"] == "REGIONAL"
+        assert call_kwargs["Capacity"] == 150
+        assert call_kwargs["Description"] == "Test desc"
+        assert call_kwargs["Rules"] == []
+        assert call_kwargs["VisibilityConfig"]["MetricName"] == "test-group"
+        assert call_kwargs["VisibilityConfig"]["SampledRequestsEnabled"] is True
+        assert call_kwargs["VisibilityConfig"]["CloudWatchMetricsEnabled"] is True
+
+    def test_name_fallback_when_summary_name_missing(self, mock_waf_client):
+        """If Summary.Name is missing, the requested name is used as fallback."""
+        mock_waf_client.create_rule_group.return_value = {"Summary": {"Id": "rg-fallback"}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.create_custom_ruleset(_zs(), "requested-name", "phase", 100)
+        assert result["name"] == "requested-name"
+
+
+class TestDeleteCustomRuleset:
+    """Tests for delete_custom_ruleset."""
+
+    def test_success(self, mock_waf_client):
+        """Successful delete calls get_rule_group for LockToken then delete_rule_group."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "my-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"Rules": [], "VisibilityConfig": {}},
+            "LockToken": "lock-del-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.delete_custom_ruleset(_zs(), "rg-1")
+
+        # Verify get_rule_group was called to fetch the lock token
+        mock_waf_client.get_rule_group.assert_called_once_with(
+            Name="my-group", Scope="REGIONAL", Id="rg-1"
+        )
+        # Verify delete_rule_group was called with correct args
+        mock_waf_client.delete_rule_group.assert_called_once_with(
+            Name="my-group", Scope="REGIONAL", Id="rg-1", LockToken="lock-del-1"
+        )
+
+    def test_error_wrapping(self, mock_waf_client):
+        """ClientError from delete_rule_group is wrapped as ProviderError."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "my-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"Rules": [], "VisibilityConfig": {}},
+            "LockToken": "lock-1",
+        }
+        mock_waf_client.delete_rule_group.side_effect = _make_client_error(
+            "WAFInternalErrorException", "Internal error"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="Internal error"):
+            provider.delete_custom_ruleset(_zs(), "rg-1")
+
+    def test_auth_error_wrapping(self, mock_waf_client):
+        """AccessDeniedException from delete_rule_group is wrapped as ProviderAuthError."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "my-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"Rules": [], "VisibilityConfig": {}},
+            "LockToken": "lock-1",
+        }
+        mock_waf_client.delete_rule_group.side_effect = _make_client_error(
+            "AccessDeniedException", "Access denied"
+        )
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.delete_custom_ruleset(_zs(), "rg-1")
+
+    def test_find_rule_group_failure(self, mock_waf_client):
+        """delete_custom_ruleset raises when rule group ID not found."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-other", "Name": "other-group"}]
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(Exception, match=r"Rule Group.*not found"):
+            provider.delete_custom_ruleset(_zs(), "rg-missing")
+        # delete_rule_group should never be called
+        mock_waf_client.delete_rule_group.assert_not_called()
+
+    @patch("octorules_aws.provider.time.sleep")
+    def test_lock_retry_on_stale_token(self, _mock_sleep, mock_waf_client):
+        """WAFOptimisticLockException triggers retry for delete_custom_ruleset."""
+        mock_waf_client.list_rule_groups.return_value = {
+            "RuleGroups": [{"Id": "rg-1", "Name": "my-group"}]
+        }
+        mock_waf_client.get_rule_group.return_value = {
+            "RuleGroup": {"Rules": [], "VisibilityConfig": {}},
+            "LockToken": "lock-1",
+        }
+        mock_waf_client.delete_rule_group.side_effect = [
+            _make_client_error("WAFOptimisticLockException"),
+            None,
+        ]
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.delete_custom_ruleset(_zs(), "rg-1")
+        assert mock_waf_client.delete_rule_group.call_count == 2
+        # get_rule_group called once per attempt (re-fetch for fresh LockToken)
+        assert mock_waf_client.get_rule_group.call_count == 2
+
+
+class TestCloudFrontScope:
+    """Tests for CLOUDFRONT scope configuration."""
+
+    def test_explicit_cloudfront_scope(self, mock_waf_client):
+        """waf_scope='CLOUDFRONT' is stored and passed to API calls."""
+        provider = AwsWafProvider(client=mock_waf_client, waf_scope="CLOUDFRONT")
+        assert provider._waf_scope == "CLOUDFRONT"
+
+    def test_cloudfront_scope_in_list_web_acls(self, mock_waf_client):
+        """CLOUDFRONT scope is passed through to list_web_acls pagination."""
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "cf-acl", "Id": "cf-id", "ARN": "arn:cf"}]
+        }
+        provider = AwsWafProvider(client=mock_waf_client, waf_scope="CLOUDFRONT")
+        provider.resolve_zone_id("cf-acl")
+        call_kwargs = mock_waf_client.list_web_acls.call_args[1]
+        assert call_kwargs["Scope"] == "CLOUDFRONT"
+
+    def test_cloudfront_scope_in_get_web_acl(self, mock_waf_client):
+        """CLOUDFRONT scope is passed through to get_web_acl."""
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "cf-acl", "Id": "cf-id", "ARN": "arn:cf"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": {
+                "Name": "cf-acl",
+                "Id": "cf-id",
+                "DefaultAction": {"Allow": {}},
+                "VisibilityConfig": {},
+                "Rules": [],
+            },
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client, waf_scope="CLOUDFRONT")
+        provider.resolve_zone_id("cf-acl")
+        provider.get_phase_rules(Scope(zone_id="cf-id", label=""), "aws_waf_custom")
+        call_kwargs = mock_waf_client.get_web_acl.call_args[1]
+        assert call_kwargs["Scope"] == "CLOUDFRONT"
+
+    def test_cloudfront_scope_in_create_rule_group(self, mock_waf_client):
+        """CLOUDFRONT scope is passed through to create_rule_group."""
+        mock_waf_client.create_rule_group.return_value = {
+            "Summary": {"Id": "rg-cf", "Name": "cf-group"}
+        }
+        provider = AwsWafProvider(client=mock_waf_client, waf_scope="CLOUDFRONT")
+        provider.create_custom_ruleset(_zs(), "cf-group", "phase", 100)
+        call_kwargs = mock_waf_client.create_rule_group.call_args[1]
+        assert call_kwargs["Scope"] == "CLOUDFRONT"
+
+    def test_env_var_fallback(self, mock_waf_client, monkeypatch):
+        """AWS_WAF_SCOPE env var is used when waf_scope is not provided."""
+        monkeypatch.setenv("AWS_WAF_SCOPE", "CLOUDFRONT")
+        provider = AwsWafProvider(client=mock_waf_client)
+        assert provider._waf_scope == "CLOUDFRONT"
+
+    def test_env_var_fallback_regional(self, mock_waf_client, monkeypatch):
+        """AWS_WAF_SCOPE=REGIONAL env var works correctly."""
+        monkeypatch.setenv("AWS_WAF_SCOPE", "REGIONAL")
+        provider = AwsWafProvider(client=mock_waf_client)
+        assert provider._waf_scope == "REGIONAL"
+
+    def test_invalid_scope_raises(self, mock_waf_client):
+        """Invalid waf_scope raises ConfigError."""
+        from octorules.config import ConfigError
+
+        with pytest.raises(ConfigError, match="Invalid waf_scope"):
+            AwsWafProvider(client=mock_waf_client, waf_scope="INVALID")
+
+    def test_invalid_env_var_scope_raises(self, mock_waf_client, monkeypatch):
+        """Invalid AWS_WAF_SCOPE env var raises ConfigError."""
+        from octorules.config import ConfigError
+
+        monkeypatch.setenv("AWS_WAF_SCOPE", "GLOBAL")
+        with pytest.raises(ConfigError, match="Invalid waf_scope"):
+            AwsWafProvider(client=mock_waf_client)
+
+    def test_default_scope_is_regional(self, mock_waf_client, monkeypatch):
+        """Default scope is REGIONAL when neither kwarg nor env var is set."""
+        monkeypatch.delenv("AWS_WAF_SCOPE", raising=False)
+        provider = AwsWafProvider(client=mock_waf_client)
+        assert provider._waf_scope == "REGIONAL"

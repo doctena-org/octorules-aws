@@ -1,24 +1,13 @@
 """AWS WAF provider for octorules."""
 
-from octorules.phases import Phase, register_api_fields, register_non_phase_key, register_phases
+from octorules.phases import register_api_fields, register_non_phase_key, register_phases
 
+from octorules_aws._phases import AWS_PHASE_IDS, AWS_PHASE_NAMES, AWS_PHASES
 from octorules_aws.provider import AwsWafProvider
 from octorules_aws.validate import validate_rules
 
-_AWS_PHASES = [
-    Phase("aws_waf_custom_rules", "aws_waf_custom", None, zone_level=True, account_level=False),
-    Phase("aws_waf_rate_rules", "aws_waf_rate", None, zone_level=True, account_level=False),
-    Phase("aws_waf_managed_rules", "aws_waf_managed", None, zone_level=True, account_level=False),
-    Phase(
-        "aws_waf_rule_group_rules",
-        "aws_waf_rule_group",
-        None,
-        zone_level=True,
-        account_level=False,
-    ),
-]
-
-AWS_PHASE_NAMES: frozenset[str] = frozenset(p.friendly_name for p in _AWS_PHASES)
+# Keep backward-compatible alias for internal use.
+_AWS_PHASES = AWS_PHASES
 
 register_phases(_AWS_PHASES)
 register_api_fields("rule", {"OverrideAction"})
@@ -33,4 +22,4 @@ from octorules_aws.audit import register_aws_audit  # noqa: E402
 
 register_aws_audit()
 
-__all__ = ["AwsWafProvider", "validate_rules"]
+__all__ = ["AWS_PHASE_IDS", "AWS_PHASE_NAMES", "AwsWafProvider", "validate_rules"]

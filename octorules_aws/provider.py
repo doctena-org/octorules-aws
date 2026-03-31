@@ -14,6 +14,8 @@ from octorules.provider.base import PhaseRulesResult, Scope
 from octorules.provider.exceptions import ProviderAuthError, ProviderError
 from octorules.provider.utils import make_error_wrapper
 
+from octorules_aws._phases import AWS_PHASE_IDS as _AWS_PHASE_IDS
+
 log = logging.getLogger(__name__)
 
 # AWS WAF error codes that indicate auth/permission problems.
@@ -36,16 +38,6 @@ _DEFAULT_VISIBILITY_CONFIG = {
     "CloudWatchMetricsEnabled": True,
     "MetricName": "",  # will be set per-call
 }
-
-# Phase identifiers registered by this provider.
-_AWS_PHASE_IDS = frozenset(
-    {
-        "aws_waf_custom",
-        "aws_waf_rate",
-        "aws_waf_managed",
-        "aws_waf_rule_group",
-    }
-)
 
 
 def _classify_client_error(e: Exception) -> type[ProviderAuthError] | None:
