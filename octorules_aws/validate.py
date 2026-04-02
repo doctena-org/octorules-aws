@@ -84,7 +84,8 @@ _BYTE_MATCH_REQUIRED = (
     "SearchString",
 )
 _COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2}$")
-_MAX_GEO_COUNTRY_CODES = 25
+_MAX_GEO_COUNTRY_CODES = 50
+_MAX_NESTING_DEPTH = 20  # AWS WAF maximum statement nesting depth
 
 # --- WA020: Valid top-level rule fields ------------------------------------
 _VALID_RULE_FIELDS = frozenset(
@@ -173,8 +174,13 @@ _VALID_TEXT_TRANSFORM_TYPES = frozenset(
 )
 
 # --- WA307/WA308: Size limits -----------------------------------------------
-_MAX_SEARCH_STRING_BYTES = 8192
-_MAX_REGEX_STRING_BYTES = 512
+_MAX_SEARCH_STRING_BYTES = 200  # AWS API: ByteMatchStatement.SearchString max 200 bytes
+_MAX_REGEX_STRING_BYTES = 512  # AWS API: RegexMatchStatement.RegexString max 512 chars
+
+# --- WA354-WA357: CustomResponse limits ------------------------------------
+_MAX_CUSTOM_RESPONSE_BODY_BYTES = 4096
+_MAX_CUSTOM_RESPONSE_HEADERS = 10
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 # --- WA320: FieldToMatch types that inspect request content -----------------
 # Only statement types that inspect request content can use JsonBody.
@@ -234,9 +240,12 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
         _check_visibility(rule, results, phase, ref_str, seen_metrics)
         _check_actions(rule, results, phase, ref_str)
         _check_action_params(rule, results, phase, ref_str)
+        _check_rule_labels(rule, results, phase, ref_str)
         _check_statement(rule, results, phase, ref_str)
+        _check_count_managed_group(rule, results, phase, ref_str)
 
     _check_duplicate_priorities(seen_priorities, results, phase)
+    _check_priority_gaps(seen_priorities, results, phase)
     _check_duplicate_metrics(seen_metrics, results, phase)
 
     return results
@@ -278,6 +287,38 @@ def _check_enabled(rule: dict, results: list[LintResult], phase: str, ref: str) 
                 suggestion="Remove if no longer needed",
             )
         )
+
+
+def _check_count_managed_group(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
+    """WA602: Count action on ManagedRuleGroupStatement without ScopeDownStatement."""
+    action = rule.get("Action")
+    if not isinstance(action, dict):
+        return
+    if "Count" not in action:
+        return
+    stmt = rule.get("Statement")
+    if not isinstance(stmt, dict):
+        return
+    if "ManagedRuleGroupStatement" not in stmt:
+        return
+    mrg = stmt["ManagedRuleGroupStatement"]
+    if isinstance(mrg, dict) and "ScopeDownStatement" in mrg:
+        return
+    results.append(
+        _result(
+            rule_id="WA602",
+            severity=Severity.INFO,
+            message=(
+                "Count action on ManagedRuleGroupStatement without"
+                " ScopeDownStatement logs all traffic through the managed"
+                " rule group — consider adding a ScopeDownStatement or"
+                " switching to Block"
+            ),
+            phase=phase,
+            ref=ref,
+            field="Action",
+        )
+    )
 
 
 # --- Per-rule checks --------------------------------------------------------
@@ -470,7 +511,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
 
 
 def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
-    """WA021/WA350/WA351/WA352/WA353 — Action parameter validation."""
+    """WA021/WA350/WA351/WA352/WA353/WA356/WA357 — Action parameter validation."""
     # WA021: Action/OverrideAction must be dict
     if "Action" in rule and not isinstance(rule["Action"], dict):
         results.append(
@@ -529,32 +570,116 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
                     )
                 )
 
-        # WA353: CustomResponse status code
+        # WA353/WA354/WA355: CustomResponse validation
         for action_key in ("Block",):
             block = action.get(action_key)
             if isinstance(block, dict):
                 cr = block.get("CustomResponse")
-                if isinstance(cr, dict) and "ResponseCode" in cr:
-                    code = cr["ResponseCode"]
-                    if (
-                        not isinstance(code, int)
-                        or isinstance(code, bool)
-                        or code < 200
-                        or code > 599
-                    ):
+                if isinstance(cr, dict):
+                    # WA353: CustomResponse status code
+                    if "ResponseCode" in cr:
+                        code = cr["ResponseCode"]
+                        if (
+                            not isinstance(code, int)
+                            or isinstance(code, bool)
+                            or code < 200
+                            or code > 599
+                        ):
+                            results.append(
+                                _result(
+                                    rule_id="WA353",
+                                    severity=Severity.ERROR,
+                                    message=(
+                                        f"CustomResponse.ResponseCode must be an integer"
+                                        f" in 200-599, got {code!r}"
+                                    ),
+                                    phase=phase,
+                                    ref=ref,
+                                    field="Action.Block.CustomResponse.ResponseCode",
+                                )
+                            )
+
+                    # WA354: CustomResponse body size limit
+                    body = cr.get("ResponseBody")
+                    if body is not None:
+                        byte_len = len(str(body).encode("utf-8"))
+                        if byte_len > _MAX_CUSTOM_RESPONSE_BODY_BYTES:
+                            results.append(
+                                _result(
+                                    rule_id="WA354",
+                                    severity=Severity.ERROR,
+                                    message=(
+                                        f"CustomResponse body exceeds"
+                                        f" {_MAX_CUSTOM_RESPONSE_BODY_BYTES}-byte"
+                                        f" limit ({byte_len} bytes)"
+                                    ),
+                                    phase=phase,
+                                    ref=ref,
+                                    field="Action.Block.CustomResponse.ResponseBody",
+                                )
+                            )
+
+                    # WA355: CustomResponse header count limit
+                    headers = cr.get("ResponseHeaders")
+                    if isinstance(headers, list) and len(headers) > _MAX_CUSTOM_RESPONSE_HEADERS:
                         results.append(
                             _result(
-                                rule_id="WA353",
+                                rule_id="WA355",
                                 severity=Severity.ERROR,
                                 message=(
-                                    f"CustomResponse.ResponseCode must be an integer"
-                                    f" in 200-599, got {code!r}"
+                                    f"CustomResponse exceeds"
+                                    f" {_MAX_CUSTOM_RESPONSE_HEADERS} custom headers"
+                                    f" ({len(headers)} found)"
                                 ),
                                 phase=phase,
                                 ref=ref,
-                                field="Action.Block.CustomResponse.ResponseCode",
+                                field="Action.Block.CustomResponse.ResponseHeaders",
                             )
                         )
+
+                    # WA356: CustomResponse header name validation (RFC 7230 token)
+                    if isinstance(headers, list):
+                        for hdr in headers:
+                            if not isinstance(hdr, dict):
+                                continue
+                            hdr_name = hdr.get("Name")
+                            if isinstance(hdr_name, str) and not _HEADER_NAME_RE.match(hdr_name):
+                                results.append(
+                                    _result(
+                                        rule_id="WA356",
+                                        severity=Severity.ERROR,
+                                        message=(
+                                            f"CustomResponse header name {hdr_name!r}"
+                                            f" is not a valid RFC 7230 token"
+                                        ),
+                                        phase=phase,
+                                        ref=ref,
+                                        field="Action.Block.CustomResponse.ResponseHeaders",
+                                        suggestion=(
+                                            "Header names must match"
+                                            " ^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$"
+                                        ),
+                                    )
+                                )
+
+                    # WA357: CustomResponseBodyKey must be non-empty when present
+                    body_key = cr.get("CustomResponseBodyKey")
+                    if body_key is not None:
+                        if not isinstance(body_key, str) or not body_key:
+                            results.append(
+                                _result(
+                                    rule_id="WA357",
+                                    severity=Severity.WARNING,
+                                    message="CustomResponseBodyKey is empty",
+                                    phase=phase,
+                                    ref=ref,
+                                    field="Action.Block.CustomResponse.CustomResponseBodyKey",
+                                    suggestion=(
+                                        "Provide a non-empty key referencing an entry"
+                                        " in CustomResponseBodies"
+                                    ),
+                                )
+                            )
 
     if "OverrideAction" in rule and isinstance(rule["OverrideAction"], dict):
         override = rule["OverrideAction"]
@@ -594,6 +719,28 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
                 )
 
 
+def _check_rule_labels(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
+    """WA154: RuleLabels entries must not use reserved aws:/awswaf: namespaces."""
+    labels = rule.get("RuleLabels")
+    if not isinstance(labels, list):
+        return
+    for label in labels:
+        if not isinstance(label, dict):
+            continue
+        name = label.get("Name")
+        if isinstance(name, str) and (name.startswith("aws:") or name.startswith("awswaf:")):
+            results.append(
+                _result(
+                    rule_id="WA154",
+                    severity=Severity.ERROR,
+                    message=f"RuleLabels entry '{name}' uses reserved namespace",
+                    phase=phase,
+                    ref=ref,
+                    field="RuleLabels",
+                )
+            )
+
+
 def _check_statement(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     if "Statement" not in rule:
         return
@@ -611,8 +758,21 @@ def _validate_statement(
     results: list[LintResult],
     phase: str,
     ref: str,
+    depth: int = 0,
 ) -> None:
     """Validate a single statement dict and recurse into nested statements."""
+    if depth > _MAX_NESTING_DEPTH:
+        results.append(
+            _result(
+                rule_id="WA330",
+                severity=Severity.ERROR,
+                message=f"Statement nesting exceeds maximum depth of {_MAX_NESTING_DEPTH}",
+                phase=phase,
+                ref=ref,
+                field="Statement",
+            )
+        )
+        return
     keys = set(stmt)
 
     if len(keys) != 1:
@@ -644,7 +804,7 @@ def _validate_statement(
 
     # Type-specific checks
     if "RateBasedStatement" in stmt:
-        _check_rate_based(stmt["RateBasedStatement"], results, phase, ref)
+        _check_rate_based(stmt["RateBasedStatement"], results, phase, ref, depth)
     if "ByteMatchStatement" in stmt:
         _check_byte_match(stmt["ByteMatchStatement"], results, phase, ref)
     if "GeoMatchStatement" in stmt:
@@ -658,11 +818,11 @@ def _validate_statement(
 
     # Recurse into compound statements
     if "AndStatement" in stmt:
-        _check_compound(stmt["AndStatement"], "AndStatement", results, phase, ref)
+        _check_compound(stmt["AndStatement"], "AndStatement", results, phase, ref, depth)
     if "OrStatement" in stmt:
-        _check_compound(stmt["OrStatement"], "OrStatement", results, phase, ref)
+        _check_compound(stmt["OrStatement"], "OrStatement", results, phase, ref, depth)
     if "NotStatement" in stmt:
-        _check_not(stmt["NotStatement"], results, phase, ref)
+        _check_not(stmt["NotStatement"], results, phase, ref, depth)
 
 
 def _check_rate_based(
@@ -670,6 +830,7 @@ def _check_rate_based(
     results: list[LintResult],
     phase: str,
     ref: str,
+    depth: int = 0,
 ) -> None:
     """WA303/WA304/WA305/WA306 — RateBasedStatement checks."""
     if not isinstance(rbs, dict):
@@ -756,7 +917,7 @@ def _check_rate_based(
     # Recurse into ScopeDownStatement
     sds = rbs.get("ScopeDownStatement")
     if isinstance(sds, dict):
-        _validate_statement(sds, results, phase, ref)
+        _validate_statement(sds, results, phase, ref, depth + 1)
 
 
 def _check_byte_match(
@@ -924,6 +1085,20 @@ def _check_statement_fields(
                         field=f"Statement.{stype}.Size",
                     )
                 )
+
+        # WA156: ManagedRuleGroupStatement version not pinned
+        if stype == "ManagedRuleGroupStatement" and "Version" not in inner:
+            results.append(
+                _result(
+                    rule_id="WA156",
+                    severity=Severity.WARNING,
+                    message="ManagedRuleGroupStatement version not pinned",
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.ManagedRuleGroupStatement.Version",
+                    suggestion="Pin a version to avoid unexpected rule changes",
+                )
+            )
 
         # WA315: Enum validation
         _check_statement_enums(stype, inner, results, phase, ref)
@@ -1388,8 +1563,9 @@ def _check_compound(
     results: list[LintResult],
     phase: str,
     ref: str,
+    depth: int = 0,
 ) -> None:
-    """WA310 — And/OrStatement must have >= 2 nested statements."""
+    """WA310 — And/OrStatement must have 2-10 nested statements."""
     if not isinstance(inner, dict):
         return
     stmts = inner.get("Statements", [])
@@ -1406,9 +1582,20 @@ def _check_compound(
                 field=f"Statement.{name}.Statements",
             )
         )
+    elif len(stmts) > 10:
+        results.append(
+            _result(
+                rule_id="WA310",
+                severity=Severity.ERROR,
+                message=f"{name} exceeds maximum of 10 nested statements, found {len(stmts)}",
+                phase=phase,
+                ref=ref,
+                field=f"Statement.{name}.Statements",
+            )
+        )
     for s in stmts:
         if isinstance(s, dict):
-            _validate_statement(s, results, phase, ref)
+            _validate_statement(s, results, phase, ref, depth + 1)
 
 
 def _check_not(
@@ -1416,6 +1603,7 @@ def _check_not(
     results: list[LintResult],
     phase: str,
     ref: str,
+    depth: int = 0,
 ) -> None:
     """WA311/WA321 — NotStatement must have exactly 1 nested statement."""
     if not isinstance(inner, dict):
@@ -1446,7 +1634,7 @@ def _check_not(
                     suggestion="Remove both NotStatement wrappers to simplify",
                 )
             )
-        _validate_statement(nested, results, phase, ref)
+        _validate_statement(nested, results, phase, ref, depth + 1)
 
 
 # --- ARN checks -------------------------------------------------------------
@@ -1713,6 +1901,28 @@ def _check_duplicate_priorities(
                     phase=phase,
                 )
             )
+
+
+def _check_priority_gaps(
+    seen_priorities: dict[int, list[str]],
+    results: list[LintResult],
+    phase: str,
+) -> None:
+    """WA102: Warn if any gap > 1 between sorted priority values."""
+    pris = sorted(seen_priorities.keys())
+    if len(pris) < 2:
+        return
+    for i in range(len(pris) - 1):
+        if pris[i + 1] - pris[i] > 1:
+            results.append(
+                _result(
+                    rule_id="WA102",
+                    severity=Severity.INFO,
+                    message=f"Priority gap between {pris[i]} and {pris[i + 1]}",
+                    phase=phase,
+                )
+            )
+            break  # Only warn once per phase
 
 
 def _check_duplicate_metrics(

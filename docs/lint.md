@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **59 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **69 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -69,10 +69,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA304](#wa304--ratebasedstatement-missing-aggregatekeytype) | RateBasedStatement missing AggregateKeyType | ERROR |
 | [WA305](#wa305--invalid-aggregatekeytype) | Invalid AggregateKeyType | ERROR |
 | [WA306](#wa306--ratebasedstatementlimit-exceeds-maximum) | RateBasedStatement.Limit exceeds maximum | ERROR |
-| [WA307](#wa307--searchstring-exceeds-8192-byte-limit) | SearchString exceeds 8192-byte limit | ERROR |
+| [WA307](#wa307--searchstring-exceeds-200-byte-limit) | SearchString exceeds 200-byte limit | ERROR |
 | [WA308](#wa308--regexstring-exceeds-512-byte-limit) | RegexString exceeds 512-byte limit | ERROR |
 | [WA309](#wa309--ratebasedstatement-without-scopedownstatement) | RateBasedStatement without ScopeDownStatement rate-limits all traffic | WARNING |
-| [WA310](#wa310--andorstatement-must-have-at-least-2-nested-statements) | And/OrStatement must have at least 2 nested statements | ERROR |
+| [WA310](#wa310--andorstatement-must-have-2-10-nested-statements) | And/OrStatement must have 2–10 nested statements | ERROR |
 | [WA311](#wa311--notstatement-missing-required-statement-field) | NotStatement missing required 'Statement' field | ERROR |
 | [WA312](#wa312--bytematchstatement-missing-required-field) | ByteMatchStatement missing required field | ERROR |
 | [WA313](#wa313--invalid-country-code-format) | Invalid country code format | WARNING |
@@ -84,9 +84,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA319](#wa319--invalid-regex-pattern-in-regexmatchstatement) | Invalid regex pattern in RegexMatchStatement | ERROR |
 | [WA320](#wa320--fieldtomatch-type-incompatible-with-statement-type) | FieldToMatch type incompatible with statement type | WARNING |
 | [WA321](#wa321--redundant-double-negation-notstatement-wrapping-notstatement) | Redundant double negation (NotStatement wrapping NotStatement) | WARNING |
-| [WA323](#wa323--geomatchstatement-exceeds-25-country-codes) | GeoMatchStatement exceeds 25 country codes | ERROR |
+| [WA323](#wa323--geomatchstatement-exceeds-25-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
 | [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
 | [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
+| [WA330](#wa330--statement-nesting-exceeds-maximum-depth) | Statement nesting exceeds maximum depth | ERROR |
 | [WA331](#wa331--texttransformations-exceeds-maximum-of-10-per-statement) | TextTransformations exceeds maximum of 10 per statement | ERROR |
 | [WA332](#wa332--duplicate-texttransformation-priority) | Duplicate TextTransformation Priority | ERROR |
 | [WA334](#wa334--sizeconstraintstatementssize-must-be-non-negative) | SizeConstraintStatement.Size must be non-negative | ERROR |
@@ -96,6 +97,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA351](#wa351--unknown-action-type) | Unknown action type | ERROR |
 | [WA352](#wa352--overrideaction-on-non-group-statement) | OverrideAction on non-group statement | WARNING |
 | [WA353](#wa353--customresponse-status-code-invalid) | CustomResponse status code invalid | ERROR |
+| [WA354](#wa354--customresponse-body-exceeds-4096-bytes) | CustomResponse body exceeds 4,096 bytes | ERROR |
+| [WA355](#wa355--customresponse-exceeds-10-custom-headers) | CustomResponse exceeds 10 custom headers | ERROR |
+| [WA356](#wa356--customresponse-header-name-invalid) | CustomResponse header name invalid (RFC 7230) | ERROR |
+| [WA357](#wa357--customresponsebodykey-is-empty) | CustomResponseBodyKey is empty | WARNING |
 | [WA400](#wa400--visibilityconfig-missing-required-field) | VisibilityConfig missing required field | ERROR |
 | [WA401](#wa401--visibilityconfig-field-wrong-type) | VisibilityConfig field wrong type | ERROR |
 | [WA402](#wa402--metricname-exceeds-128-characters) | MetricName exceeds 128 characters | ERROR |
@@ -108,6 +113,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA342](#wa342--contradictory-and-conditions-non-overlapping-geomatch-sets) | Contradictory AND conditions (non-overlapping GeoMatch sets) | WARNING |
 | [WA343](#wa343--always-false-pattern-sizeconstraint-size--0-is-impossible) | Always-false pattern (SizeConstraint size < 0 is impossible) | WARNING |
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
+| [WA602](#wa602--count-action-on-managedrulegroup-logs-all-traffic) | Count action on ManagedRuleGroup logs all traffic | INFO |
 
 ---
 
@@ -119,10 +125,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA100-WA101 | Priority | 2 |
 | WA200-WA201 | Action type | 2 |
 | WA300-WA343 | Statement validation | 33 |
-| WA350-WA353 | Action parameters | 4 |
+| WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
 | WA326, WA340, WA500-WA501, WA520 | Cross-rule | 5 |
-| WA600 | Best practice | 1 |
+| WA600-WA602 | Best practice | 2 |
 
 ---
 
@@ -630,7 +636,7 @@ The `Limit` value exceeds the AWS WAF maximum of 2,000,000,000 requests per 5-mi
         Limit: 2000000000
 ```
 
-### WA307 -- SearchString exceeds 8192-byte limit
+### WA307 -- SearchString exceeds 200-byte limit
 
 **Severity:** ERROR
 
@@ -712,11 +718,11 @@ A `RateBasedStatement` without a `ScopeDownStatement` applies the rate limit to 
 
 > **Note:** This is a warning, not an error. A blanket rate limit on all traffic is valid AWS WAF configuration -- it is just rarely the intended behavior. Suppress with `# octorules:disable=WA309` if intentional.
 
-### WA310 -- And/OrStatement must have at least 2 nested statements
+### WA310 -- And/OrStatement must have 2–10 nested statements
 
 **Severity:** ERROR
 
-`AndStatement` and `OrStatement` require a `Statements` list with at least 2 entries. A compound statement with 0 or 1 nested statements is pointless and rejected by the API.
+`AndStatement` and `OrStatement` require a `Statements` list with 2–10 entries. Fewer than 2 is pointless; more than 10 is rejected by the AWS WAF API.
 
 **Triggers on:**
 
@@ -1036,7 +1042,7 @@ A `NotStatement` whose inner `Statement` is itself a `NotStatement` is a redunda
         CountryCodes: ["CN"]
 ```
 
-### WA323 -- GeoMatchStatement exceeds 25 country codes
+### WA323 -- GeoMatchStatement exceeds 50 country codes
 
 **Severity:** ERROR
 
@@ -1094,6 +1100,14 @@ The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 
 ```
 
 **Fix:** Reduce the list to 5 or fewer patterns.
+
+### WA330 -- Statement nesting exceeds maximum depth
+
+**Severity:** ERROR
+
+Statement nesting (via `AndStatement`, `OrStatement`, `NotStatement`, `RateBasedStatement.ScopeDownStatement`) exceeds the maximum depth of 20 levels. Deeply nested statements are rejected by the AWS WAF API and indicate overly complex rule logic.
+
+**Fix:** Flatten compound statements or split into separate rules.
 
 ### WA331 -- TextTransformations exceeds maximum of 10 per statement
 
@@ -1541,7 +1555,13 @@ Each rule also adds 1 base WCU.
 
 **Triggers on:** Web ACL with many managed rule groups or complex custom rules.
 
-**Fix:** Reduce complexity by simplifying conditions, removing unused rules, or requesting a WCU limit increase from AWS Support.
+**Fix:** Reduce complexity by simplifying conditions, removing unused rules, or requesting a WCU limit increase from AWS Support. If you have a custom capacity limit, set `wcu_limit` in the provider config:
+
+```yaml
+providers:
+  aws:
+    wcu_limit: 5000
+```
 
 > **Note:** The estimate is a lower bound. Actual WCU consumption may vary, especially for managed rule groups. Use the AWS WAF console to see the exact WCU for managed rule groups.
 
@@ -1655,3 +1675,43 @@ aws_waf_custom_rules:
 ```
 
 **Fix:** Remove the rule entirely if it is no longer needed, or set `enabled: true` (or remove the `enabled` key) to re-enable it.
+
+### WA602 -- Count action on ManagedRuleGroup logs all traffic
+
+**Severity:** INFO
+
+A rule with `Action: Count` on a `ManagedRuleGroupStatement` without a `ScopeDownStatement` wrapper logs all traffic through the managed rule group without blocking anything. This is usually unintentional — it generates noise in CloudWatch WAF logs and consumes WCU without providing protection.
+
+**Fix:** Either change the action to `Block` for protection, or add a `ScopeDownStatement` to limit which requests are counted.
+
+### WA354 -- CustomResponse body exceeds 4,096 bytes
+
+**Severity:** ERROR
+
+The `CustomResponse.ResponseBody` field exceeds the AWS WAF limit of 4,096 bytes (4 KB). Oversized bodies are rejected by the API.
+
+**Fix:** Shorten the response body to fit within 4,096 bytes.
+
+### WA355 -- CustomResponse exceeds 10 custom headers
+
+**Severity:** ERROR
+
+The `CustomResponse.ResponseHeaders` list has more than 10 entries, exceeding the AWS WAF limit.
+
+**Fix:** Reduce the number of custom response headers to 10 or fewer.
+
+### WA356 -- CustomResponse header name invalid
+
+**Severity:** ERROR
+
+A custom response header name contains characters not allowed by RFC 7230 (HTTP token syntax). Header names must only contain alphanumeric characters and `!#$%&'*+-.^_`|~`.
+
+**Fix:** Rename the header to use only valid token characters.
+
+### WA357 -- CustomResponseBodyKey is empty
+
+**Severity:** WARNING
+
+The `CustomResponseBodyKey` field in a `CustomResponse` is present but empty. This key references a named response body defined in the Web ACL's `CustomResponseBodies` map. An empty key cannot match any defined body.
+
+**Fix:** Set the key to the name of a defined custom response body, or remove the field if no custom body is needed.

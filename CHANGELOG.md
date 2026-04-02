@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-04-02
+
+### Added
+- `wcu_limit` provider config option to override the default 1,500 WCU limit
+  for accounts with custom capacity (up to 5,000 via AWS support).
+- WA102: Non-contiguous rule priorities (INFO).
+- WA154: Reserved label namespace validation — ``aws:``/``awswaf:`` prefixes
+  rejected (ERROR).
+- WA156: Managed rule group version not pinned (WARNING).
+- WA158: IP set item count exceeds 10,000 address limit (WARNING).
+- WA330: Statement nesting depth guard — errors when nesting exceeds 20 levels.
+- WA354: CustomResponse body exceeds 4,096 bytes (ERROR).
+- WA355: CustomResponse exceeds 10 custom headers (ERROR).
+- WA356: CustomResponse header name validation — RFC 7230 (ERROR).
+- WA357: CustomResponseBodyKey is empty (WARNING).
+- WA602: Count action on ManagedRuleGroupStatement logs all traffic (INFO).
+- Pagination safety cap (1,000 pages) to prevent infinite loops on malformed
+  API responses.
+
+### Changed
+- WA310 now also rejects `AndStatement`/`OrStatement` with more than 10 nested
+  statements (AWS WAF limit).
+- `SearchString` bytes with invalid UTF-8 are now decoded with replacement
+  characters and a logged warning, instead of silent replacement.
+- Removed CI `concurrency` blocks from lint and test workflows.
+- Removed redundant `pip install yamllint` from lint workflow (now in dev deps).
+
+### Fixed
+- WA307: ``SearchString`` byte limit corrected from 8,192 to 200 bytes
+  (matches AWS WAF API documentation).
+- WA323: ``GeoMatchStatement`` country code limit corrected from 25 to 50
+  (matches AWS WAF quotas).
+- WA355: ``CustomResponse`` header limit corrected from 5 to 10
+  (matches AWS WAF quotas).
+
 ## [0.5.4] - 2026-03-31
 
 ### Changed

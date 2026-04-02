@@ -101,9 +101,14 @@ def _decode_bytes(obj: object) -> object:
 
     The AWS WAF API returns ``SearchString`` as ``bytes``.  We decode to
     ``str`` so the planner can diff against the YAML (which is always str).
+    Invalid UTF-8 is replaced with U+FFFD and a warning is logged.
     """
     if isinstance(obj, bytes):
-        return obj.decode("utf-8", errors="replace")
+        try:
+            return obj.decode("utf-8")
+        except UnicodeDecodeError:
+            log.warning("SearchString contains invalid UTF-8, using replacement characters")
+            return obj.decode("utf-8", errors="replace")
     if isinstance(obj, dict):
         return {k: _decode_bytes(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -155,6 +160,7 @@ class AwsWafProvider:
         client: object = None,
         region: str | None = None,
         waf_scope: str | None = None,
+        wcu_limit: int | None = None,
         **_extra: object,
     ) -> None:
         self._waf_scope = waf_scope or os.environ.get("AWS_WAF_SCOPE", "REGIONAL")
@@ -163,6 +169,11 @@ class AwsWafProvider:
                 f"Invalid waf_scope: {self._waf_scope!r} (must be 'REGIONAL' or 'CLOUDFRONT')"
             )
         region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+
+        if wcu_limit is not None:
+            from octorules_aws.linter._plugin import set_wcu_limit
+
+            set_wcu_limit(int(wcu_limit))
 
         if client is not None:
             self._client = client
@@ -203,12 +214,14 @@ class AwsWafProvider:
 
     # -- Pagination helper --
 
+    _MAX_PAGES = 1000  # Safety cap to prevent infinite pagination
+
     def _paginate_list(self, api_method, response_key: str) -> list[dict]:
         """Paginate a list_* API call using NextMarker."""
         results: list[dict] = []
         kwargs: dict[str, str] = {"Scope": self._waf_scope}
         seen_markers: set[str] = set()
-        while True:
+        for _ in range(self._MAX_PAGES):
             response = api_method(**kwargs)
             results.extend(response.get(response_key, []))
             marker = response.get("NextMarker")
@@ -223,6 +236,8 @@ class AwsWafProvider:
                 break
             seen_markers.add(marker)
             kwargs["NextMarker"] = marker
+        else:
+            log.warning("Pagination exceeded %d pages for %s", self._MAX_PAGES, response_key)
         return results
 
     # -- Web ACL helpers --

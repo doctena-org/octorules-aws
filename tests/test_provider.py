@@ -1119,6 +1119,36 @@ class TestMalformedResponses:
         assert isinstance(search_str, str)
         assert search_str == "bad-bot"
 
+    def test_decode_invalid_utf8_warns(self, mock_waf_client, caplog):
+        """Invalid UTF-8 bytes in SearchString logs a warning and uses replacement."""
+        acl = {
+            "Name": "bad-utf8-acl",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {},
+            "Rules": [
+                {
+                    "Name": "bad-bytes",
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "Statement": {
+                        "ByteMatchStatement": {
+                            "SearchString": b"\x80\x81invalid",
+                            "FieldToMatch": {"UriPath": {}},
+                            "PositionalConstraint": "CONTAINS",
+                        }
+                    },
+                    "VisibilityConfig": {},
+                },
+            ],
+        }
+        provider = self._setup(mock_waf_client, acl)
+        rules = provider.get_phase_rules(_zs(), "aws_waf_custom")
+        assert len(rules) == 1
+        search_str = rules[0]["Statement"]["ByteMatchStatement"]["SearchString"]
+        assert isinstance(search_str, str)
+        assert "invalid UTF-8" in caplog.text
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent/parallel usage with max_workers > 1."""
@@ -1591,3 +1621,135 @@ class TestCloudFrontScope:
         monkeypatch.delenv("AWS_WAF_SCOPE", raising=False)
         provider = AwsWafProvider(client=mock_waf_client)
         assert provider._waf_scope == "REGIONAL"
+
+
+# ---------------------------------------------------------------------------
+# Auth error code classification
+# ---------------------------------------------------------------------------
+
+
+class TestAuthErrorCodes:
+    """Each AWS auth error code must map to ProviderAuthError."""
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "AccessDeniedException",
+            "UnauthorizedAccess",
+            "AccessDenied",
+            "ExpiredTokenException",
+            "InvalidIdentityToken",
+        ],
+    )
+    def test_auth_code_raises_provider_auth_error(self, mock_waf_client, code):
+        error_response = {"Error": {"Code": code, "Message": "denied"}}
+        mock_waf_client.list_web_acls.side_effect = ClientError(error_response, "ListWebACLs")
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderAuthError):
+            provider.list_zones()
+
+    def test_non_auth_code_raises_provider_error(self, mock_waf_client):
+        """Non-auth ClientError maps to ProviderError, not ProviderAuthError."""
+        error_response = {"Error": {"Code": "WAFInternalErrorException", "Message": "oops"}}
+        mock_waf_client.list_web_acls.side_effect = ClientError(error_response, "ListWebACLs")
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError):
+            provider.list_zones()
+
+
+# ---------------------------------------------------------------------------
+# Pagination edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPaginationEdgeCases:
+    def test_marker_loop_detected(self, mock_waf_client, caplog):
+        """Repeated NextMarker breaks the pagination loop."""
+        mock_waf_client.list_web_acls.side_effect = [
+            {"WebACLs": [{"Name": "a", "Id": "1", "ARN": "arn:1"}], "NextMarker": "tok"},
+            {"WebACLs": [{"Name": "b", "Id": "2", "ARN": "arn:2"}], "NextMarker": "tok"},
+        ]
+        provider = AwsWafProvider(client=mock_waf_client)
+        zones = provider.list_zones()
+        assert len(zones) == 2
+        assert "loop detected" in caplog.text.lower()
+
+    def test_max_pages_cap(self, mock_waf_client, caplog):
+        """Pagination stops at _MAX_PAGES even with valid unique markers."""
+        call_count = 0
+
+        def paginated_response(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return {
+                "WebACLs": [{"Name": f"acl-{call_count}", "Id": f"id-{call_count}", "ARN": "a"}],
+                "NextMarker": f"page-{call_count}",
+            }
+
+        mock_waf_client.list_web_acls.side_effect = paginated_response
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider._MAX_PAGES = 5
+        zones = provider.list_zones()
+        assert len(zones) == 5
+        assert "exceeded" in caplog.text.lower()
+
+    def test_create_ruleset_missing_id(self, mock_waf_client):
+        """ProviderError when create response lacks Summary.Id."""
+        mock_waf_client.create_rule_group.return_value = {"Summary": {}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError):
+            provider.create_custom_ruleset(_zs(), "test", "aws_waf_custom", 100)
+
+    def test_create_list_missing_id(self, mock_waf_client):
+        """ProviderError when create IP set response lacks Summary.Id."""
+        mock_waf_client.create_ip_set.return_value = {"Summary": {}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError):
+            provider.create_list(_zs(), "blocklist", "ip")
+
+
+# ---------------------------------------------------------------------------
+# wcu_limit provider kwarg
+# ---------------------------------------------------------------------------
+
+
+class TestWcuLimitKwarg:
+    def test_wcu_limit_sets_module_value(self, mock_waf_client):
+        """wcu_limit kwarg propagates to the linter module."""
+        from octorules_aws.linter._plugin import _WCU_LIMIT
+
+        original = _WCU_LIMIT
+        try:
+            AwsWafProvider(client=mock_waf_client, wcu_limit=3000)
+            from octorules_aws.linter._plugin import _WCU_LIMIT as new_val
+
+            assert new_val == 3000
+        finally:
+            from octorules_aws.linter._plugin import set_wcu_limit
+
+            set_wcu_limit(original)
+
+    def test_wcu_limit_string_converted(self, mock_waf_client):
+        """String wcu_limit is converted to int."""
+        from octorules_aws.linter._plugin import _WCU_LIMIT
+
+        original = _WCU_LIMIT
+        try:
+            AwsWafProvider(client=mock_waf_client, wcu_limit="5000")
+            from octorules_aws.linter._plugin import _WCU_LIMIT as new_val
+
+            assert new_val == 5000
+        finally:
+            from octorules_aws.linter._plugin import set_wcu_limit
+
+            set_wcu_limit(original)
+
+    def test_wcu_limit_none_keeps_default(self, mock_waf_client):
+        """None wcu_limit leaves the default unchanged."""
+        from octorules_aws.linter._plugin import _WCU_LIMIT
+
+        original = _WCU_LIMIT
+        AwsWafProvider(client=mock_waf_client, wcu_limit=None)
+        from octorules_aws.linter._plugin import _WCU_LIMIT as after
+
+        assert after == original

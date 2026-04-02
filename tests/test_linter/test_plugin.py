@@ -641,3 +641,63 @@ class TestIpSetReferences:
         aws_lint(rules_data, ctx)
         wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
         assert len(wa326) == 0
+
+
+class TestListItemCounts:
+    """WA158: IP set exceeds 10,000 address limit."""
+
+    def test_wa158_under_limit_no_warn(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "small-set", "kind": "ip", "items": ["10.0.0.1"] * 100},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 0
+
+    def test_wa158_exactly_10000_no_warn(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "big-set", "kind": "ip", "items": ["10.0.0.1"] * 10_000},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 0
+
+    def test_wa158_exceeds_limit(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "huge-set", "kind": "ip", "items": ["10.0.0.1"] * 10_001},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 1
+        assert "huge-set" in wa158[0].message
+
+    def test_wa158_no_lists_section_no_warn(self):
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 0
+
+    def test_wa158_multiple_lists_one_over(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "ok-set", "kind": "ip", "items": ["10.0.0.1"] * 100},
+                {"name": "bad-set", "kind": "ip", "items": ["10.0.0.1"] * 10_001},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 1
+        assert "bad-set" in wa158[0].message

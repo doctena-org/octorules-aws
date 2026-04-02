@@ -55,6 +55,7 @@ All settings below go under the provider section (e.g. `providers.aws`).
 | `waf_scope` | `AWS_WAF_SCOPE` or `REGIONAL` | `REGIONAL` or `CLOUDFRONT` |
 | `max_retries` | `2` | API retry count |
 | `timeout` | `30` | API timeout in seconds |
+| `wcu_limit` | `1500` | Web ACL WCU capacity for WA340 lint check. Override for accounts with custom limits (up to 5,000). |
 
 Safety thresholds are configured under `safety:` (framework-owned, not forwarded to the provider):
 

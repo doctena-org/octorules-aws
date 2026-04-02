@@ -28,7 +28,7 @@ WA304 = RuleMeta(
 )
 WA305 = RuleMeta("WA305", "statement", "Invalid AggregateKeyType", Severity.ERROR)
 WA306 = RuleMeta("WA306", "statement", "RateBasedStatement.Limit exceeds maximum", Severity.ERROR)
-WA307 = RuleMeta("WA307", "statement", "SearchString exceeds 8192-byte limit", Severity.ERROR)
+WA307 = RuleMeta("WA307", "statement", "SearchString exceeds 200-byte limit", Severity.ERROR)
 WA308 = RuleMeta("WA308", "statement", "RegexString exceeds 512-byte limit", Severity.ERROR)
 WA309 = RuleMeta(
     "WA309",
@@ -75,11 +75,14 @@ WA351 = RuleMeta("WA351", "action", "Unknown action type", Severity.ERROR)
 WA352 = RuleMeta("WA352", "action", "OverrideAction on non-group statement", Severity.WARNING)
 WA353 = RuleMeta("WA353", "action", "CustomResponse status code invalid", Severity.ERROR)
 
+# WA102: Non-contiguous priorities
+WA102 = RuleMeta("WA102", "priority", "Non-contiguous rule priorities", Severity.INFO)
+
 # WA022: Duplicate ref
 WA022 = RuleMeta("WA022", "structure", "Duplicate ref within phase", Severity.ERROR)
 
 # WA323-WA325: Statement limit checks
-WA323 = RuleMeta("WA323", "statement", "GeoMatchStatement exceeds 25 country codes", Severity.ERROR)
+WA323 = RuleMeta("WA323", "statement", "GeoMatchStatement exceeds 50 country codes", Severity.ERROR)
 WA324 = RuleMeta(
     "WA324", "statement", "RateBasedStatement.CustomKeys exceeds maximum of 5", Severity.ERROR
 )
@@ -89,6 +92,19 @@ WA325 = RuleMeta(
     "FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns",
     Severity.ERROR,
 )
+
+# WA154: Reserved label namespace
+WA154 = RuleMeta(
+    "WA154", "structure", "RuleLabels uses reserved aws:/awswaf: namespace", Severity.ERROR
+)
+
+# WA156: Managed rule group version not pinned
+WA156 = RuleMeta(
+    "WA156", "statement", "ManagedRuleGroupStatement version not pinned", Severity.WARNING
+)
+
+# WA330: Statement nesting depth
+WA330 = RuleMeta("WA330", "statement", "Statement nesting exceeds maximum depth", Severity.ERROR)
 
 # WA331-WA332: TextTransformation limit checks
 WA331 = RuleMeta(
@@ -103,10 +119,19 @@ WA334 = RuleMeta(
 WA335 = RuleMeta("WA335", "statement", "JsonBody.MatchScope invalid", Severity.ERROR)
 WA336 = RuleMeta("WA336", "statement", "JsonBody.InvalidFallbackBehavior invalid", Severity.ERROR)
 
+# WA354-WA357: CustomResponse parameter limits
+WA354 = RuleMeta("WA354", "action", "CustomResponse body exceeds 4,096 bytes", Severity.ERROR)
+WA355 = RuleMeta("WA355", "action", "CustomResponse exceeds 5 custom headers", Severity.ERROR)
+WA356 = RuleMeta("WA356", "action", "CustomResponse header name invalid", Severity.ERROR)
+WA357 = RuleMeta("WA357", "action", "CustomResponseBodyKey is empty", Severity.WARNING)
+
 # WA520: Cross-rule analysis
 WA520 = RuleMeta(
     "WA520", "cross-rule", "Duplicate statement across rules in phase", Severity.WARNING
 )
+
+# WA158: IP set item count limit
+WA158 = RuleMeta("WA158", "cross-rule", "IP set exceeds 10,000 address limit", Severity.WARNING)
 
 # WA326: Cross-file ARN reference validation
 WA326 = RuleMeta(
@@ -136,7 +161,13 @@ WA343 = RuleMeta(
     Severity.WARNING,
 )
 
-# WA600: Best practice
+# WA600-WA602: Best practice
 WA600 = RuleMeta("WA600", "best_practice", "Rule is disabled (enabled: false)", Severity.INFO)
+WA602 = RuleMeta(
+    "WA602",
+    "best_practice",
+    "Count action on ManagedRuleGroupStatement logs all traffic",
+    Severity.INFO,
+)
 
 AWS_RULE_METAS: list[RuleMeta] = [obj for obj in globals().values() if isinstance(obj, RuleMeta)]

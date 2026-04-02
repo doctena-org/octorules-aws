@@ -414,6 +414,18 @@ class TestCompoundStatements:
         }
         assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa310_and_eleven_too_many(self):
+        """AndStatement with 11 statements exceeds max of 10."""
+        stmts = [{"ByteMatchStatement": {}} for _ in range(11)]
+        stmt = {"AndStatement": {"Statements": stmts}}
+        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa310_and_ten_ok(self):
+        """AndStatement with 10 statements is valid."""
+        stmts = [{"ByteMatchStatement": {}} for _ in range(10)]
+        stmt = {"AndStatement": {"Statements": stmts}}
+        assert "WA310" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
 
 # ---------------------------------------------------------------------------
 # WA311  NotStatement exactly 1
@@ -1586,6 +1598,248 @@ class TestCustomResponseCode:
 
 
 # ---------------------------------------------------------------------------
+# WA354  CustomResponse body size
+# ---------------------------------------------------------------------------
+
+
+class TestCustomResponseBody:
+    def test_wa354_body_within_limit(self):
+        body = "x" * 4096
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
+        assert "WA354" not in _ids(validate_rules([r]))
+
+    def test_wa354_body_exceeds_limit(self):
+        body = "x" * 4097
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
+        assert "WA354" in _ids(validate_rules([r]))
+
+    def test_wa354_no_body_ok(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
+        assert "WA354" not in _ids(validate_rules([r]))
+
+    def test_wa354_multibyte_body(self):
+        """Multi-byte characters push UTF-8 byte length over limit."""
+        # U+00E9 is 2 bytes in UTF-8; 2731 chars * 2 = 5462 bytes > 4096
+        body = "\u00e9" * 2731
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
+        assert "WA354" in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA355  CustomResponse header count
+# ---------------------------------------------------------------------------
+
+
+class TestCustomResponseHeaders:
+    def test_wa355_ten_headers_ok(self):
+        headers = [{"Name": f"x-h{i}", "Value": "v"} for i in range(10)]
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
+        )
+        assert "WA355" not in _ids(validate_rules([r]))
+
+    def test_wa355_eleven_headers_error(self):
+        headers = [{"Name": f"x-h{i}", "Value": "v"} for i in range(11)]
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
+        )
+        assert "WA355" in _ids(validate_rules([r]))
+
+    def test_wa355_no_headers_ok(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
+        assert "WA355" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA356  CustomResponse header name validation
+# ---------------------------------------------------------------------------
+
+
+class TestCustomResponseHeaderName:
+    def test_wa356_valid_header_name(self):
+        headers = [{"Name": "x-custom-header", "Value": "v"}]
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
+        )
+        assert "WA356" not in _ids(validate_rules([r]))
+
+    def test_wa356_invalid_header_name_with_space(self):
+        headers = [{"Name": "x bad header", "Value": "v"}]
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
+        )
+        assert "WA356" in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA357  CustomResponseBodyKey is empty
+# ---------------------------------------------------------------------------
+
+
+class TestCustomResponseBodyKey:
+    def test_wa357_non_empty_key_ok(self):
+        r = _rule(
+            Action={
+                "Block": {
+                    "CustomResponse": {
+                        "ResponseCode": 403,
+                        "CustomResponseBodyKey": "my-body",
+                    }
+                }
+            }
+        )
+        assert "WA357" not in _ids(validate_rules([r]))
+
+    def test_wa357_empty_key_warns(self):
+        r = _rule(
+            Action={
+                "Block": {
+                    "CustomResponse": {
+                        "ResponseCode": 403,
+                        "CustomResponseBodyKey": "",
+                    }
+                }
+            }
+        )
+        assert "WA357" in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA602  Count action on ManagedRuleGroupStatement
+# ---------------------------------------------------------------------------
+
+
+class TestCountManagedRuleGroup:
+    def test_wa602_count_managed_no_scope_down(self):
+        r = _rule(
+            Action={"Count": {}},
+            Statement={
+                "ManagedRuleGroupStatement": {
+                    "VendorName": "AWS",
+                    "Name": "AWSManagedRulesCommonRuleSet",
+                }
+            },
+        )
+        # Remove OverrideAction if present (not needed for Action-based rules)
+        r.pop("OverrideAction", None)
+        assert "WA602" in _ids(validate_rules([r]))
+
+    def test_wa602_count_managed_with_scope_down(self):
+        r = _rule(
+            Action={"Count": {}},
+            Statement={
+                "ManagedRuleGroupStatement": {
+                    "VendorName": "AWS",
+                    "Name": "AWSManagedRulesCommonRuleSet",
+                    "ScopeDownStatement": {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "CONTAINS",
+                            "SearchString": "/api",
+                        }
+                    },
+                }
+            },
+        )
+        r.pop("OverrideAction", None)
+        assert "WA602" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA102  Non-contiguous priorities
+# ---------------------------------------------------------------------------
+
+
+class TestPriorityGaps:
+    def test_wa102_contiguous_priorities(self):
+        a = _rule(ref="a", Priority=0)
+        b = _rule(ref="b", Priority=1)
+        b["VisibilityConfig"]["MetricName"] = "b"
+        assert "WA102" not in _ids(validate_rules([a, b]))
+
+    def test_wa102_gap_detected(self):
+        a = _rule(ref="a", Priority=0)
+        b = _rule(ref="b", Priority=5)
+        b["VisibilityConfig"]["MetricName"] = "b"
+        assert "WA102" in _ids(validate_rules([a, b]))
+
+    def test_wa102_single_rule_no_warn(self):
+        assert "WA102" not in _ids(validate_rules([_rule(Priority=10)]))
+
+    def test_wa102_fires_once_per_phase(self):
+        a = _rule(ref="a", Priority=0)
+        b = _rule(ref="b", Priority=5)
+        c = _rule(ref="c", Priority=20)
+        b["VisibilityConfig"]["MetricName"] = "b"
+        c["VisibilityConfig"]["MetricName"] = "c"
+        wa102 = [r for r in validate_rules([a, b, c]) if r.rule_id == "WA102"]
+        assert len(wa102) == 1
+
+
+# ---------------------------------------------------------------------------
+# WA154  RuleLabels reserved namespace
+# ---------------------------------------------------------------------------
+
+
+class TestRuleLabels:
+    def test_wa154_aws_prefix(self):
+        r = _rule(RuleLabels=[{"Name": "aws:managed:label"}])
+        assert "WA154" in _ids(validate_rules([r]))
+
+    def test_wa154_awswaf_prefix(self):
+        r = _rule(RuleLabels=[{"Name": "awswaf:managed:label"}])
+        assert "WA154" in _ids(validate_rules([r]))
+
+    def test_wa154_custom_label_ok(self):
+        r = _rule(RuleLabels=[{"Name": "custom:my-label"}])
+        assert "WA154" not in _ids(validate_rules([r]))
+
+    def test_wa154_no_labels_ok(self):
+        assert "WA154" not in _ids(validate_rules([_rule()]))
+
+    def test_wa154_empty_labels_list_ok(self):
+        r = _rule(RuleLabels=[])
+        assert "WA154" not in _ids(validate_rules([r]))
+
+    def test_wa154_non_dict_label_skipped(self):
+        r = _rule(RuleLabels=["not-a-dict"])
+        assert "WA154" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA156  ManagedRuleGroupStatement version not pinned
+# ---------------------------------------------------------------------------
+
+
+class TestManagedRuleGroupVersion:
+    def _managed_rule(self, **extra):
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+                **extra,
+            }
+        }
+        return _rule(
+            Statement=stmt,
+            Action=None,
+            OverrideAction={"None": {}},
+        )
+
+    def test_wa156_no_version_warns(self):
+        r = self._managed_rule()
+        # Remove the Action key entirely so WA005 doesn't fire
+        del r["Action"]
+        assert "WA156" in _ids(validate_rules([r]))
+
+    def test_wa156_version_pinned_ok(self):
+        r = self._managed_rule(Version="1.0")
+        del r["Action"]
+        assert "WA156" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
 # Integration / edge cases
 # ---------------------------------------------------------------------------
 
@@ -1860,7 +2114,7 @@ class TestDoubleNegation:
 
 
 # ---------------------------------------------------------------------------
-# WA307  SearchString exceeds 8192-byte limit
+# WA307  SearchString exceeds 200-byte limit
 # ---------------------------------------------------------------------------
 
 
@@ -1876,27 +2130,27 @@ class TestSearchStringSize:
         }
 
     def test_wa307_within_limit(self):
-        stmt = self._byte_match_stmt("x" * 8192)
+        stmt = self._byte_match_stmt("x" * 200)
         assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa307_exceeds_limit(self):
-        stmt = self._byte_match_stmt("x" * 8193)
+        stmt = self._byte_match_stmt("x" * 201)
         results = validate_rules([_rule(Statement=stmt)])
         assert "WA307" in _ids(results)
         wa307 = [r for r in results if r.rule_id == "WA307"]
-        assert "8192-byte" in wa307[0].message
-        assert "8193 bytes" in wa307[0].message
+        assert "200-byte" in wa307[0].message
+        assert "201 bytes" in wa307[0].message
 
     def test_wa307_multibyte_characters(self):
         """Multi-byte UTF-8 chars count by byte length, not char count."""
-        # e-acute = 2 bytes each; 4097 * 2 = 8194 bytes > 8192
-        stmt = self._byte_match_stmt("\u00e9" * 4097)
+        # e-acute = 2 bytes each; 101 * 2 = 202 bytes > 200
+        stmt = self._byte_match_stmt("\u00e9" * 101)
         results = validate_rules([_rule(Statement=stmt)])
         assert "WA307" in _ids(results)
 
     def test_wa307_exactly_at_limit_multibyte(self):
-        """4096 two-byte chars = 8192 bytes = exactly at limit."""
-        stmt = self._byte_match_stmt("\u00e9" * 4096)
+        """100 two-byte chars = 200 bytes = exactly at limit."""
+        stmt = self._byte_match_stmt("\u00e9" * 100)
         assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa307_short_string(self):
@@ -1929,7 +2183,7 @@ class TestSearchStringSize:
         assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa307_field_is_set(self):
-        stmt = self._byte_match_stmt("x" * 8193)
+        stmt = self._byte_match_stmt("x" * 201)
         results = validate_rules([_rule(Statement=stmt)])
         wa307 = [r for r in results if r.rule_id == "WA307"]
         assert wa307[0].field == "Statement.ByteMatchStatement.SearchString"
@@ -1940,7 +2194,7 @@ class TestSearchStringSize:
             "NotStatement": {
                 "Statement": {
                     "ByteMatchStatement": {
-                        "SearchString": "x" * 8193,
+                        "SearchString": "x" * 201,
                         "FieldToMatch": {"UriPath": {}},
                         "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
                         "PositionalConstraint": "CONTAINS",
@@ -2274,31 +2528,31 @@ class TestFieldToMatchIncompatible:
 
 
 # ---------------------------------------------------------------------------
-# WA323  GeoMatchStatement exceeds 25 country codes
+# WA323  GeoMatchStatement exceeds 50 country codes
 # ---------------------------------------------------------------------------
 
 
 class TestGeoMatchCountLimit:
-    def test_wa323_exactly_25_ok(self):
-        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(25)]
+    def test_wa323_exactly_50_ok(self):
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(50)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
         assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
-    def test_wa323_exceeds_25(self):
-        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(26)]
+    def test_wa323_exceeds_50(self):
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(51)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
         results = validate_rules([_rule(Statement=stmt)])
         assert "WA323" in _ids(results)
         wa323 = [r for r in results if r.rule_id == "WA323"]
-        assert "26" in wa323[0].message
-        assert "25" in wa323[0].message
+        assert "51" in wa323[0].message
+        assert "50" in wa323[0].message
 
     def test_wa323_empty_ok(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": []}}
         assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa323_field_is_set(self):
-        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(26)]
+        codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(51)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
         results = validate_rules([_rule(Statement=stmt)])
         wa323 = [r for r in results if r.rule_id == "WA323"]
@@ -2923,6 +3177,32 @@ class TestAlwaysFalse:
 # ---------------------------------------------------------------------------
 # WCU estimation (unit tests for _estimate_wcu and _estimate_rule_wcu)
 # ---------------------------------------------------------------------------
+
+
+class TestNestingDepth:
+    """WA330: Statement nesting exceeds maximum depth."""
+
+    def _deeply_nested(self, depth: int) -> dict:
+        """Build a statement nested to the given depth via NotStatement chain."""
+        inner = {"ByteMatchStatement": {"SearchString": "x", "FieldToMatch": {"UriPath": {}}}}
+        for _ in range(depth):
+            inner = {"NotStatement": {"Statement": inner}}
+        return inner
+
+    def test_wa330_excessive_nesting(self):
+        from octorules_aws.validate import _MAX_NESTING_DEPTH
+
+        stmt = self._deeply_nested(_MAX_NESTING_DEPTH + 1)
+        rule = _rule(Statement=stmt)
+        ids = _ids(validate_rules([rule]))
+        assert "WA330" in ids
+
+    def test_normal_nesting_ok(self):
+        # 3 levels of nesting should be fine
+        stmt = self._deeply_nested(3)
+        rule = _rule(Statement=stmt)
+        ids = _ids(validate_rules([rule]))
+        assert "WA330" not in ids
 
 
 class TestWcuEstimation:

@@ -19,8 +19,19 @@ _AWS_PHASE_NAMES = AWS_PHASE_NAMES
 
 AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
 
-# Default Web ACL WCU limit
+# Default Web ACL WCU limit.  Override via ``set_wcu_limit()`` for accounts
+# with custom capacity (up to 5000 via AWS support).
 _WCU_LIMIT = 1500
+
+
+def set_wcu_limit(limit: int) -> None:
+    """Override the WCU limit used by the WA340 check.
+
+    The default is 1500 (AWS WAF standard).  Call this from provider init
+    if the user has configured a custom ``wcu_limit`` in their provider config.
+    """
+    global _WCU_LIMIT
+    _WCU_LIMIT = limit
 
 
 def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -217,6 +228,36 @@ def _check_ipset_references(rules_data: dict[str, Any], ctx: LintContext) -> Non
                     )
 
 
+_MAX_IPSET_ITEMS = 10_000
+
+
+def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA158: Warn if any IP set in the lists section exceeds 10,000 items."""
+    lists_section = rules_data.get("lists")
+    if not isinstance(lists_section, list):
+        return
+
+    for lst in lists_section:
+        if not isinstance(lst, dict):
+            continue
+        items = lst.get("items")
+        if not isinstance(items, list):
+            continue
+        if len(items) > _MAX_IPSET_ITEMS:
+            name = lst.get("name", "<unknown>")
+            ctx.add(
+                LintResult(
+                    rule_id="WA158",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"IP set '{name}' has {len(items)} items,"
+                        f" exceeding the {_MAX_IPSET_ITEMS} address limit"
+                    ),
+                    phase="",
+                )
+            )
+
+
 def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """Run all AWS WAF lint checks on a zone rules file."""
     for phase_name, rules in rules_data.items():
@@ -238,3 +279,4 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     _check_duplicate_statements(rules_data, ctx)
     _check_wcu_capacity(rules_data, ctx)
     _check_ipset_references(rules_data, ctx)
+    _check_list_item_counts(rules_data, ctx)
