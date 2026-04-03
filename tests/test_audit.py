@@ -1,7 +1,5 @@
 """Tests for the AWS WAF audit IP extractor."""
 
-from __future__ import annotations
-
 from octorules_aws.audit import _collect_ipset_arns, _extract_ips
 
 

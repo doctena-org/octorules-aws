@@ -1,7 +1,5 @@
 """Tests for the shared _statement_util module."""
 
-from __future__ import annotations
-
 from octorules_aws._statement_util import IPSET_ARN_RE, collect_ipset_arns
 
 

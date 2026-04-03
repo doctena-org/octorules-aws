@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-04-03
+
+### Changed
+- Lock retry uses shared `retry_with_backoff()` from core with exponential
+  backoff and jitter (was linear).
+- Rule field mapping uses shared `normalize_fields()`/`denormalize_fields()`
+  from core.
+- Pagination raises `ProviderError` on loop detection instead of silently
+  returning partial data.
+- Compound statement recursion extracted to `_recurse_into_compound()` helper
+  in validate.py.
+- `get_all_custom_rulesets` with filtered IDs now indexes the pre-fetched rule
+  group list instead of scanning it per-ID (O(n) dict lookup vs O(n*m) list
+  search).
+
+### Added
+- Tests for `_decode_bytes` with invalid UTF-8 input.
+
+### Removed
+- `from __future__ import annotations` from all source files.
+
 ## [0.6.0] - 2026-04-02
 
 ### Added

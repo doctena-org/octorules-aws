@@ -1,18 +1,16 @@
 """AWS WAF v2 provider for octorules."""
 
-from __future__ import annotations
-
 import logging
 import os
 import threading
-import time
 
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 from octorules.config import ConfigError
 from octorules.provider.base import PhaseRulesResult, Scope
 from octorules.provider.exceptions import ProviderAuthError, ProviderError
-from octorules.provider.utils import make_error_wrapper
+from octorules.provider.utils import denormalize_fields, make_error_wrapper, normalize_fields
+from octorules.retry import retry_with_backoff
 
 from octorules_aws._phases import AWS_PHASE_IDS as _AWS_PHASE_IDS
 
@@ -31,6 +29,8 @@ _AUTH_ERROR_CODES = frozenset(
 
 # Maximum retry attempts for WAFOptimisticLockException (stale LockToken).
 _LOCK_RETRIES = 3
+_LOCK_BACKOFF = (0.5, 1.0, 2.0)
+_LOCK_JITTER = 0.5
 
 # Default VisibilityConfig for newly created Rule Groups.
 _DEFAULT_VISIBILITY_CONFIG = {
@@ -49,6 +49,15 @@ def _classify_client_error(e: Exception) -> type[ProviderAuthError] | None:
     return None
 
 
+class _OptimisticLockError(ProviderError):
+    """Internal: raised when a WAFOptimisticLockException is detected.
+
+    Extends ``ProviderError`` so that exhausted retries produce a proper
+    provider exception.  Used so that :func:`retry_with_backoff` can catch
+    a concrete type while non-lock ``ClientError`` codes propagate immediately.
+    """
+
+
 _wrap_provider_errors = make_error_wrapper(
     auth_errors=(NoCredentialsError,),
     connection_errors=(EndpointConnectionError, ConnectionError),
@@ -60,8 +69,6 @@ _wrap_provider_errors = make_error_wrapper(
 # ---------------------------------------------------------------------------
 # Rule classification helpers
 # ---------------------------------------------------------------------------
-
-
 def _is_rate_rule(rule: dict) -> bool:
     """True if the rule uses a RateBasedStatement."""
     stmt = rule.get("Statement", {})
@@ -94,8 +101,6 @@ def _classify_phase(rule: dict) -> str:
 # ---------------------------------------------------------------------------
 # Rule normalization (AWS format <-> octorules format)
 # ---------------------------------------------------------------------------
-
-
 def _decode_bytes(obj: object) -> object:
     """Recursively decode bytes values to UTF-8 strings.
 
@@ -116,25 +121,27 @@ def _decode_bytes(obj: object) -> object:
     return obj
 
 
+_AWS_FIELD_MAP = {"Name": "ref"}
+
+
 def _normalize_rule(rule: dict) -> dict:
     """Convert AWS WAF rule to octorules format (Name -> ref, bytes -> str)."""
     d = _decode_bytes(dict(rule))
-    d["ref"] = d.pop("Name", "")
-    return d
+    # Ensure 'Name' exists so normalize_fields always produces 'ref'
+    d.setdefault("Name", "")
+    return normalize_fields(d, _AWS_FIELD_MAP)
 
 
 def _denormalize_rule(rule: dict) -> dict:
     """Convert octorules format back to AWS WAF rule (ref -> Name)."""
     d = dict(rule)
-    d["Name"] = d.pop("ref", "")
-    return d
+    d.setdefault("ref", "")
+    return denormalize_fields(d, _AWS_FIELD_MAP)
 
 
 # ---------------------------------------------------------------------------
 # Provider
 # ---------------------------------------------------------------------------
-
-
 class AwsWafProvider:
     """AWS WAF v2 provider for octorules.
 
@@ -228,12 +235,9 @@ class AwsWafProvider:
             if not marker:
                 break
             if marker in seen_markers:
-                log.warning(
-                    "Pagination loop detected for %s: marker %r repeated",
-                    response_key,
-                    marker,
+                raise ProviderError(
+                    f"Pagination loop detected for {response_key}: marker {marker!r} repeated"
                 )
-                break
             seen_markers.add(marker)
             kwargs["NextMarker"] = marker
         else:
@@ -258,28 +262,32 @@ class AwsWafProvider:
         return response["WebACL"], response["LockToken"]
 
     def _with_lock_retry(self, operation: object, label: str) -> object:
-        """Run *operation()* with optimistic-lock retry and linear backoff.
+        """Run *operation()* with optimistic-lock retry and exponential backoff.
 
         Retries up to ``_LOCK_RETRIES`` times on
-        ``WAFOptimisticLockException``, sleeping ``0.5s * attempt`` between
-        retries so concurrent writers have time to settle.
+        ``WAFOptimisticLockException``, using :func:`retry_with_backoff`
+        so concurrent writers have time to settle.
+
+        Non-lock ``ClientError`` codes are re-raised immediately.
         """
-        for attempt in range(_LOCK_RETRIES):
+
+        def _guarded_op():
             try:
                 return operation()
             except ClientError as e:
                 code = e.response.get("Error", {}).get("Code", "")
-                if code == "WAFOptimisticLockException" and attempt < _LOCK_RETRIES - 1:
-                    delay = 0.5 * (attempt + 1)
-                    log.debug(
-                        "Stale LockToken for %s, retrying in %.1fs",
-                        label,
-                        delay,
-                    )
-                    time.sleep(delay)
-                    continue
-                raise
-        raise ProviderError("Lock retry exhausted")  # pragma: no cover
+                if code != "WAFOptimisticLockException":
+                    raise
+                raise _OptimisticLockError(str(e)) from e
+
+        return retry_with_backoff(
+            _guarded_op,
+            retryable=(_OptimisticLockError,),
+            max_attempts=_LOCK_RETRIES,
+            backoff=_LOCK_BACKOFF,
+            jitter=_LOCK_JITTER,
+            label=f"lock retry for {label}",
+        )
 
     # -- Zone resolution --
 
@@ -492,7 +500,17 @@ class AwsWafProvider:
                 for rg in rg_list
             ]
         else:
-            meta_list = [{"id": rid, "name": "", "phase": ""} for rid in ruleset_ids]
+            # Build index from pre-fetched list so _find_rule_group hits cache
+            rg_by_id = {rg.get("Id", ""): rg for rg in rg_list}
+            meta_list = [
+                {
+                    "id": rid,
+                    "name": rg_by_id.get(rid, {}).get("Name", ""),
+                    "phase": "",
+                    "description": rg_by_id.get(rid, {}).get("Description", ""),
+                }
+                for rid in ruleset_ids
+            ]
 
         if not meta_list:
             return {}

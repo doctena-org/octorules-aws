@@ -1,7 +1,5 @@
 """Tests for AWS WAF rule validation."""
 
-from __future__ import annotations
-
 import pytest
 from octorules.linter.engine import LintResult
 
@@ -39,8 +37,6 @@ def _ids(results: list[LintResult]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
-
-
 class TestValidRules:
     def test_no_errors(self):
         assert validate_rules([_rule()]) == []
@@ -64,8 +60,6 @@ class TestValidRules:
 # ---------------------------------------------------------------------------
 # WA001  Missing ref
 # ---------------------------------------------------------------------------
-
-
 class TestMissingRef:
     def test_wa001_missing_ref(self):
         r = _rule()
@@ -79,8 +73,6 @@ class TestMissingRef:
 # ---------------------------------------------------------------------------
 # WA010  ref format
 # ---------------------------------------------------------------------------
-
-
 class TestDuplicateRef:
     def test_wa022_duplicate_ref(self):
         rules = [_rule(ref="dup"), _rule(ref="dup")]
@@ -127,8 +119,6 @@ class TestRefFormat:
 # ---------------------------------------------------------------------------
 # WA002  Missing Priority
 # ---------------------------------------------------------------------------
-
-
 class TestMissingPriority:
     def test_wa002_missing_priority(self):
         r = _rule()
@@ -139,8 +129,6 @@ class TestMissingPriority:
 # ---------------------------------------------------------------------------
 # WA100-WA101  Priority checks
 # ---------------------------------------------------------------------------
-
-
 class TestPriority:
     def test_wa100_negative(self):
         assert "WA100" in _ids(validate_rules([_rule(Priority=-1)]))
@@ -173,8 +161,6 @@ class TestPriority:
 # ---------------------------------------------------------------------------
 # WA003  Missing VisibilityConfig
 # ---------------------------------------------------------------------------
-
-
 class TestMissingVisibility:
     def test_wa003_missing_visibility_config(self):
         r = _rule()
@@ -185,8 +171,6 @@ class TestMissingVisibility:
 # ---------------------------------------------------------------------------
 # WA004-WA005  Action / OverrideAction presence
 # ---------------------------------------------------------------------------
-
-
 class TestActionPresence:
     def test_wa004_missing_both_actions(self):
         r = _rule()
@@ -201,8 +185,6 @@ class TestActionPresence:
 # ---------------------------------------------------------------------------
 # WA200-WA201  Action type checks
 # ---------------------------------------------------------------------------
-
-
 class TestActions:
     @pytest.mark.parametrize("action_key", ["Allow", "Block", "Count", "Captcha", "Challenge"])
     def test_wa200_valid_actions(self, action_key):
@@ -228,8 +210,6 @@ class TestActions:
 # ---------------------------------------------------------------------------
 # WA300-WA306  Statement checks
 # ---------------------------------------------------------------------------
-
-
 class TestStatement:
     def test_wa300_empty_statement(self):
         assert "WA300" in _ids(validate_rules([_rule(Statement={})]))
@@ -324,8 +304,6 @@ class TestStatement:
 # ---------------------------------------------------------------------------
 # WA305  AggregateKeyType enum
 # ---------------------------------------------------------------------------
-
-
 class TestAggregateKeyType:
     @pytest.mark.parametrize("akt", ["IP", "FORWARDED_IP", "CUSTOM_KEYS", "CONSTANT"])
     def test_wa305_valid(self, akt):
@@ -340,8 +318,6 @@ class TestAggregateKeyType:
 # ---------------------------------------------------------------------------
 # WA306  Limit upper bound
 # ---------------------------------------------------------------------------
-
-
 class TestLimitUpperBound:
     def test_wa306_exceeds_max(self):
         stmt = {
@@ -365,8 +341,6 @@ class TestLimitUpperBound:
 # ---------------------------------------------------------------------------
 # WA310  And/Or min 2 statements
 # ---------------------------------------------------------------------------
-
-
 class TestCompoundStatements:
     def test_wa310_and_zero_statements(self):
         stmt = {"AndStatement": {"Statements": []}}
@@ -430,8 +404,6 @@ class TestCompoundStatements:
 # ---------------------------------------------------------------------------
 # WA311  NotStatement exactly 1
 # ---------------------------------------------------------------------------
-
-
 class TestNotStatement:
     def test_wa311_missing_statement(self):
         stmt = {"NotStatement": {}}
@@ -457,8 +429,6 @@ class TestNotStatement:
 # ---------------------------------------------------------------------------
 # WA312  ByteMatchStatement required fields
 # ---------------------------------------------------------------------------
-
-
 class TestByteMatch:
     def test_wa312_missing_field_to_match(self):
         stmt = {
@@ -519,8 +489,6 @@ class TestByteMatch:
 # ---------------------------------------------------------------------------
 # WA313  GeoMatchStatement country codes
 # ---------------------------------------------------------------------------
-
-
 class TestGeoMatch:
     def test_wa313_valid_codes(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "DE", "FR"]}}
@@ -550,8 +518,6 @@ class TestGeoMatch:
 # ---------------------------------------------------------------------------
 # WA400-WA402  VisibilityConfig checks
 # ---------------------------------------------------------------------------
-
-
 class TestVisibilityConfig:
     def test_wa400_missing_sampled(self):
         vc = {"CloudWatchMetricsEnabled": True, "MetricName": "m"}
@@ -609,8 +575,6 @@ class TestVisibilityConfig:
 # ---------------------------------------------------------------------------
 # WA500  Duplicate MetricName
 # ---------------------------------------------------------------------------
-
-
 class TestDuplicateMetricName:
     def test_wa500_duplicate(self):
         a = _rule(ref="a", Priority=1)
@@ -628,8 +592,6 @@ class TestDuplicateMetricName:
 # ---------------------------------------------------------------------------
 # ScopeDownStatement recursion
 # ---------------------------------------------------------------------------
-
-
 class TestScopeDown:
     def test_scope_down_validated(self):
         """ScopeDownStatement is recursively validated."""
@@ -656,13 +618,9 @@ class TestScopeDown:
 # ---------------------------------------------------------------------------
 # Integration / edge cases
 # ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # WA020  Unknown top-level rule field
 # ---------------------------------------------------------------------------
-
-
 class TestUnknownFields:
     def test_wa020_unknown_field(self):
         r = _rule(Foo="bar")
@@ -691,8 +649,6 @@ class TestUnknownFields:
 # ---------------------------------------------------------------------------
 # WA021  Action/OverrideAction must be dict
 # ---------------------------------------------------------------------------
-
-
 class TestActionMustBeDict:
     def test_wa021_action_string(self):
         assert "WA021" in _ids(validate_rules([_rule(Action="Block")]))
@@ -722,8 +678,6 @@ class TestActionMustBeDict:
 # ---------------------------------------------------------------------------
 # WA314  Missing required field in statement type
 # ---------------------------------------------------------------------------
-
-
 class TestStatementRequiredFields:
     def test_wa314_ipset_missing_arn(self):
         stmt = {"IPSetReferenceStatement": {}}
@@ -880,8 +834,6 @@ class TestStatementRequiredFields:
 # ---------------------------------------------------------------------------
 # WA315  Invalid enum value in statement
 # ---------------------------------------------------------------------------
-
-
 class TestStatementEnums:
     # PositionalConstraint
     @pytest.mark.parametrize(
@@ -1006,8 +958,6 @@ class TestStatementEnums:
 # ---------------------------------------------------------------------------
 # WA316  FieldToMatch validation
 # ---------------------------------------------------------------------------
-
-
 class TestFieldToMatch:
     def test_wa316_valid_single_key(self):
         stmt = {
@@ -1176,8 +1126,6 @@ class TestFieldToMatch:
 # ---------------------------------------------------------------------------
 # WA317  TextTransformations validation
 # ---------------------------------------------------------------------------
-
-
 class TestTextTransformations:
     def test_wa317_not_a_list(self):
         stmt = {
@@ -1378,8 +1326,6 @@ class TestTextTransformations:
 # ---------------------------------------------------------------------------
 # WA318  RateBasedStatement conditional requirements
 # ---------------------------------------------------------------------------
-
-
 class TestRateBasedConditional:
     def test_wa318_custom_keys_without_custom_keys_field(self):
         stmt = {
@@ -1452,8 +1398,6 @@ class TestRateBasedConditional:
 # ---------------------------------------------------------------------------
 # WA350  Action must have exactly one key
 # ---------------------------------------------------------------------------
-
-
 class TestActionOneKey:
     def test_wa350_action_zero_keys(self):
         assert "WA350" in _ids(validate_rules([_rule(Action={})]))
@@ -1486,8 +1430,6 @@ class TestActionOneKey:
 # ---------------------------------------------------------------------------
 # WA351  Unknown action type
 # ---------------------------------------------------------------------------
-
-
 class TestUnknownActionType:
     def test_wa351_unknown_action(self):
         assert "WA351" in _ids(validate_rules([_rule(Action={"Drop": {}})]))
@@ -1503,8 +1445,6 @@ class TestUnknownActionType:
 # ---------------------------------------------------------------------------
 # WA352  OverrideAction on non-group statement
 # ---------------------------------------------------------------------------
-
-
 class TestOverrideActionOnNonGroup:
     def test_wa352_override_on_byte_match(self):
         r = _rule()
@@ -1556,8 +1496,6 @@ class TestOverrideActionOnNonGroup:
 # ---------------------------------------------------------------------------
 # WA353  CustomResponse status code
 # ---------------------------------------------------------------------------
-
-
 class TestCustomResponseCode:
     def test_wa353_valid_code(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
@@ -1600,8 +1538,6 @@ class TestCustomResponseCode:
 # ---------------------------------------------------------------------------
 # WA354  CustomResponse body size
 # ---------------------------------------------------------------------------
-
-
 class TestCustomResponseBody:
     def test_wa354_body_within_limit(self):
         body = "x" * 4096
@@ -1628,8 +1564,6 @@ class TestCustomResponseBody:
 # ---------------------------------------------------------------------------
 # WA355  CustomResponse header count
 # ---------------------------------------------------------------------------
-
-
 class TestCustomResponseHeaders:
     def test_wa355_ten_headers_ok(self):
         headers = [{"Name": f"x-h{i}", "Value": "v"} for i in range(10)]
@@ -1653,8 +1587,6 @@ class TestCustomResponseHeaders:
 # ---------------------------------------------------------------------------
 # WA356  CustomResponse header name validation
 # ---------------------------------------------------------------------------
-
-
 class TestCustomResponseHeaderName:
     def test_wa356_valid_header_name(self):
         headers = [{"Name": "x-custom-header", "Value": "v"}]
@@ -1674,8 +1606,6 @@ class TestCustomResponseHeaderName:
 # ---------------------------------------------------------------------------
 # WA357  CustomResponseBodyKey is empty
 # ---------------------------------------------------------------------------
-
-
 class TestCustomResponseBodyKey:
     def test_wa357_non_empty_key_ok(self):
         r = _rule(
@@ -1707,8 +1637,6 @@ class TestCustomResponseBodyKey:
 # ---------------------------------------------------------------------------
 # WA602  Count action on ManagedRuleGroupStatement
 # ---------------------------------------------------------------------------
-
-
 class TestCountManagedRuleGroup:
     def test_wa602_count_managed_no_scope_down(self):
         r = _rule(
@@ -1749,8 +1677,6 @@ class TestCountManagedRuleGroup:
 # ---------------------------------------------------------------------------
 # WA102  Non-contiguous priorities
 # ---------------------------------------------------------------------------
-
-
 class TestPriorityGaps:
     def test_wa102_contiguous_priorities(self):
         a = _rule(ref="a", Priority=0)
@@ -1780,8 +1706,6 @@ class TestPriorityGaps:
 # ---------------------------------------------------------------------------
 # WA154  RuleLabels reserved namespace
 # ---------------------------------------------------------------------------
-
-
 class TestRuleLabels:
     def test_wa154_aws_prefix(self):
         r = _rule(RuleLabels=[{"Name": "aws:managed:label"}])
@@ -1810,8 +1734,6 @@ class TestRuleLabels:
 # ---------------------------------------------------------------------------
 # WA156  ManagedRuleGroupStatement version not pinned
 # ---------------------------------------------------------------------------
-
-
 class TestManagedRuleGroupVersion:
     def _managed_rule(self, **extra):
         stmt = {
@@ -1842,13 +1764,9 @@ class TestManagedRuleGroupVersion:
 # ---------------------------------------------------------------------------
 # Integration / edge cases
 # ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # WA600  Rule is disabled
 # ---------------------------------------------------------------------------
-
-
 class TestDisabledRule:
     def test_wa600_enabled_false(self):
         r = _rule(enabled=False)
@@ -1923,8 +1841,6 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # WA319  Invalid regex pattern in RegexMatchStatement
 # ---------------------------------------------------------------------------
-
-
 class TestRegexValidation:
     def _regex_stmt(self, regex_string):
         return {
@@ -2022,8 +1938,6 @@ class TestRegexValidation:
 # ---------------------------------------------------------------------------
 # WA321  Redundant double negation (NotStatement wrapping NotStatement)
 # ---------------------------------------------------------------------------
-
-
 class TestDoubleNegation:
     def test_double_not_fires(self):
         stmt = {
@@ -2116,8 +2030,6 @@ class TestDoubleNegation:
 # ---------------------------------------------------------------------------
 # WA307  SearchString exceeds 200-byte limit
 # ---------------------------------------------------------------------------
-
-
 class TestSearchStringSize:
     def _byte_match_stmt(self, search_string):
         return {
@@ -2208,8 +2120,6 @@ class TestSearchStringSize:
 # ---------------------------------------------------------------------------
 # WA308  RegexString exceeds 512-byte limit
 # ---------------------------------------------------------------------------
-
-
 class TestRegexStringSize:
     def _regex_stmt(self, regex_string):
         return {
@@ -2299,8 +2209,6 @@ class TestRegexStringSize:
 # ---------------------------------------------------------------------------
 # WA309  RateBasedStatement without ScopeDownStatement
 # ---------------------------------------------------------------------------
-
-
 class TestRateBasedNoScopeDown:
     def test_wa309_no_scope_down(self):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
@@ -2354,8 +2262,6 @@ class TestRateBasedNoScopeDown:
 # ---------------------------------------------------------------------------
 # WA320  FieldToMatch type incompatible with statement type
 # ---------------------------------------------------------------------------
-
-
 class TestFieldToMatchIncompatible:
     def test_wa320_jsonbody_on_byte_match_ok(self):
         """JsonBody is valid on ByteMatchStatement."""
@@ -2530,8 +2436,6 @@ class TestFieldToMatchIncompatible:
 # ---------------------------------------------------------------------------
 # WA323  GeoMatchStatement exceeds 50 country codes
 # ---------------------------------------------------------------------------
-
-
 class TestGeoMatchCountLimit:
     def test_wa323_exactly_50_ok(self):
         codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(50)]
@@ -2562,8 +2466,6 @@ class TestGeoMatchCountLimit:
 # ---------------------------------------------------------------------------
 # WA324  CustomKeys exceeds maximum of 5
 # ---------------------------------------------------------------------------
-
-
 class TestCustomKeysLimit:
     def _rate_stmt(self, custom_keys):
         return {
@@ -2605,8 +2507,6 @@ class TestCustomKeysLimit:
 # ---------------------------------------------------------------------------
 # WA325  Headers/Cookies MatchPattern exceeds 5 patterns
 # ---------------------------------------------------------------------------
-
-
 class TestMatchPatternLimit:
     def _byte_match_with_headers(self, match_pattern):
         return {
@@ -2699,8 +2599,6 @@ class TestMatchPatternLimit:
 # ---------------------------------------------------------------------------
 # WA331  TextTransformations exceeds maximum of 10 per statement
 # ---------------------------------------------------------------------------
-
-
 class TestTextTransformationsLimit:
     def _stmt_with_transforms(self, count):
         transforms = [{"Priority": i, "Type": "NONE"} for i in range(count)]
@@ -2739,8 +2637,6 @@ class TestTextTransformationsLimit:
 # ---------------------------------------------------------------------------
 # WA332  Duplicate TextTransformation Priority
 # ---------------------------------------------------------------------------
-
-
 class TestTextTransformationDuplicatePriority:
     def test_wa332_duplicate_priority(self):
         stmt = {
@@ -2811,8 +2707,6 @@ class TestTextTransformationDuplicatePriority:
 # ---------------------------------------------------------------------------
 # WA334  SizeConstraintStatement.Size must be non-negative
 # ---------------------------------------------------------------------------
-
-
 class TestSizeConstraintNonNegative:
     def _size_stmt(self, size):
         return {
@@ -2854,8 +2748,6 @@ class TestSizeConstraintNonNegative:
 # ---------------------------------------------------------------------------
 # WA335  JsonBody.MatchScope invalid
 # ---------------------------------------------------------------------------
-
-
 class TestJsonBodyMatchScope:
     def _json_body_stmt(self, match_scope, fallback="MATCH"):
         return {
@@ -2917,8 +2809,6 @@ class TestJsonBodyMatchScope:
 # ---------------------------------------------------------------------------
 # WA336  JsonBody.InvalidFallbackBehavior invalid
 # ---------------------------------------------------------------------------
-
-
 class TestJsonBodyFallbackBehavior:
     def _json_body_stmt(self, fallback, match_scope="ALL"):
         return {
@@ -2980,8 +2870,6 @@ class TestJsonBodyFallbackBehavior:
 # ---------------------------------------------------------------------------
 # WA341  GeoMatchStatement likely always true
 # ---------------------------------------------------------------------------
-
-
 class TestGeoAlwaysTrue:
     def test_wa341_200_country_codes(self):
         """GeoMatch with >= 200 codes triggers WA341."""
@@ -3023,8 +2911,6 @@ class TestGeoAlwaysTrue:
 # ---------------------------------------------------------------------------
 # WA342  Contradictory AND conditions (non-overlapping GeoMatch sets)
 # ---------------------------------------------------------------------------
-
-
 class TestContradictoryGeo:
     def test_wa342_non_overlapping_sets(self):
         """AND with non-overlapping GeoMatch sets triggers WA342."""
@@ -3100,8 +2986,6 @@ class TestContradictoryGeo:
 # ---------------------------------------------------------------------------
 # WA343  Always-false pattern (Size < 0 impossible)
 # ---------------------------------------------------------------------------
-
-
 class TestAlwaysFalse:
     def test_wa343_size_zero_lt(self):
         """SizeConstraint with Size=0 and LT triggers WA343."""
@@ -3177,8 +3061,6 @@ class TestAlwaysFalse:
 # ---------------------------------------------------------------------------
 # WCU estimation (unit tests for _estimate_wcu and _estimate_rule_wcu)
 # ---------------------------------------------------------------------------
-
-
 class TestNestingDepth:
     """WA330: Statement nesting exceeds maximum depth."""
 

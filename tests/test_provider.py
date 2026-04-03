@@ -1,7 +1,5 @@
 """Tests for the AWS WAF provider."""
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
@@ -185,7 +183,7 @@ class TestPutPhaseRules:
         count = provider.put_phase_rules(_zs(), "aws_waf_custom", [])
         assert count == 0
 
-    @patch("octorules_aws.provider.time.sleep")
+    @patch("octorules.retry.time.sleep")
     def test_retries_on_stale_lock(self, _mock_sleep, mock_waf_client, web_acl):
         """WAFOptimisticLockException triggers re-GET and retry."""
         mock_waf_client.list_web_acls.return_value = {
@@ -209,7 +207,7 @@ class TestPutPhaseRules:
         # get_web_acl called once per attempt (re-GET on retry)
         assert mock_waf_client.get_web_acl.call_count == 2
 
-    @patch("octorules_aws.provider.time.sleep")
+    @patch("octorules.retry.time.sleep")
     def test_stale_lock_exhausted_raises(self, _mock_sleep, mock_waf_client, web_acl):
         """After max retries, the exception propagates."""
         mock_waf_client.list_web_acls.return_value = {
@@ -586,10 +584,8 @@ class TestPagination:
         assert result[1]["id"] == "ip-2"
         assert mock_waf_client.list_ip_sets.call_count == 2
 
-    def test_repeated_marker_breaks_loop(self, mock_waf_client, caplog):
-        """Repeated NextMarker triggers loop detection and breaks."""
-        import logging
-
+    def test_repeated_marker_raises(self, mock_waf_client):
+        """Repeated NextMarker raises ProviderError instead of returning partial data."""
         mock_waf_client.list_web_acls.side_effect = [
             {
                 "WebACLs": [{"Name": "acl-1", "Id": "id-1", "ARN": "arn:1"}],
@@ -601,13 +597,8 @@ class TestPagination:
             },
         ]
         provider = AwsWafProvider(client=mock_waf_client)
-        with caplog.at_level(logging.WARNING):
-            acls = provider._paginate_list(mock_waf_client.list_web_acls, "WebACLs")
-        # Should have results from both pages (2nd page fetched before detecting repeat)
-        assert len(acls) == 2
-        assert "Pagination loop detected" in caplog.text
-        # 2 calls: first page + second page (loop detected on 2nd marker)
-        assert mock_waf_client.list_web_acls.call_count == 2
+        with pytest.raises(ProviderError, match="Pagination loop detected"):
+            provider._paginate_list(mock_waf_client.list_web_acls, "WebACLs")
 
     def test_single_page_no_marker(self, mock_waf_client):
         """Single-page response (no NextMarker) works without looping."""
@@ -842,7 +833,7 @@ class TestLockRetry:
         provider.resolve_zone_id("my-acl")
         return provider
 
-    @patch("octorules_aws.provider.time.sleep")
+    @patch("octorules.retry.time.sleep")
     def test_lock_retry_succeeds_on_second_attempt(self, _mock_sleep, mock_waf_client, web_acl):
         """First attempt hits WAFOptimisticLockException, second succeeds."""
         provider = self._setup_provider(mock_waf_client, web_acl)
@@ -856,7 +847,7 @@ class TestLockRetry:
         # Re-fetches the Web ACL on retry to get fresh LockToken
         assert mock_waf_client.get_web_acl.call_count == 2
 
-    @patch("octorules_aws.provider.time.sleep")
+    @patch("octorules.retry.time.sleep")
     def test_lock_retry_exhausted(self, _mock_sleep, mock_waf_client, web_acl):
         """All 3 attempts hit WAFOptimisticLockException → raises ProviderError."""
         provider = self._setup_provider(mock_waf_client, web_acl)
@@ -1148,6 +1139,48 @@ class TestMalformedResponses:
         search_str = rules[0]["Statement"]["ByteMatchStatement"]["SearchString"]
         assert isinstance(search_str, str)
         assert "invalid UTF-8" in caplog.text
+
+
+class TestDecodeBytes:
+    """Direct unit tests for _decode_bytes."""
+
+    def test_valid_utf8(self):
+        from octorules_aws.provider import _decode_bytes
+
+        assert _decode_bytes(b"hello") == "hello"
+
+    def test_invalid_utf8_uses_replacement_char(self, caplog):
+        """Invalid UTF-8 bytes produce U+FFFD replacement characters."""
+        from octorules_aws.provider import _decode_bytes
+
+        result = _decode_bytes(b"\xff\xfe")
+        assert isinstance(result, str)
+        assert "\ufffd" in result
+        assert "invalid UTF-8" in caplog.text
+
+    def test_nested_invalid_utf8_in_dict(self, caplog):
+        """Invalid UTF-8 nested inside a dict is decoded with replacements."""
+        from octorules_aws.provider import _decode_bytes
+
+        result = _decode_bytes({"key": b"\x80\x81"})
+        assert isinstance(result["key"], str)
+        assert "\ufffd" in result["key"]
+
+    def test_nested_invalid_utf8_in_list(self, caplog):
+        """Invalid UTF-8 nested inside a list is decoded with replacements."""
+        from octorules_aws.provider import _decode_bytes
+
+        result = _decode_bytes([b"\xc0\xc1", "ok"])
+        assert isinstance(result[0], str)
+        assert "\ufffd" in result[0]
+        assert result[1] == "ok"
+
+    def test_non_bytes_passthrough(self):
+        from octorules_aws.provider import _decode_bytes
+
+        assert _decode_bytes(42) == 42
+        assert _decode_bytes(None) is None
+        assert _decode_bytes("already-str") == "already-str"
 
 
 class TestConcurrentWorkers:
@@ -1519,7 +1552,7 @@ class TestDeleteCustomRuleset:
         # delete_rule_group should never be called
         mock_waf_client.delete_rule_group.assert_not_called()
 
-    @patch("octorules_aws.provider.time.sleep")
+    @patch("octorules.retry.time.sleep")
     def test_lock_retry_on_stale_token(self, _mock_sleep, mock_waf_client):
         """WAFOptimisticLockException triggers retry for delete_custom_ruleset."""
         mock_waf_client.list_rule_groups.return_value = {
@@ -1626,8 +1659,6 @@ class TestCloudFrontScope:
 # ---------------------------------------------------------------------------
 # Auth error code classification
 # ---------------------------------------------------------------------------
-
-
 class TestAuthErrorCodes:
     """Each AWS auth error code must map to ProviderAuthError."""
 
@@ -1660,19 +1691,16 @@ class TestAuthErrorCodes:
 # ---------------------------------------------------------------------------
 # Pagination edge cases
 # ---------------------------------------------------------------------------
-
-
 class TestPaginationEdgeCases:
-    def test_marker_loop_detected(self, mock_waf_client, caplog):
-        """Repeated NextMarker breaks the pagination loop."""
+    def test_marker_loop_raises(self, mock_waf_client):
+        """Repeated NextMarker raises ProviderError."""
         mock_waf_client.list_web_acls.side_effect = [
             {"WebACLs": [{"Name": "a", "Id": "1", "ARN": "arn:1"}], "NextMarker": "tok"},
             {"WebACLs": [{"Name": "b", "Id": "2", "ARN": "arn:2"}], "NextMarker": "tok"},
         ]
         provider = AwsWafProvider(client=mock_waf_client)
-        zones = provider.list_zones()
-        assert len(zones) == 2
-        assert "loop detected" in caplog.text.lower()
+        with pytest.raises(ProviderError, match="Pagination loop detected"):
+            provider.list_zones()
 
     def test_max_pages_cap(self, mock_waf_client, caplog):
         """Pagination stops at _MAX_PAGES even with valid unique markers."""
@@ -1711,8 +1739,6 @@ class TestPaginationEdgeCases:
 # ---------------------------------------------------------------------------
 # wcu_limit provider kwarg
 # ---------------------------------------------------------------------------
-
-
 class TestWcuLimitKwarg:
     def test_wcu_limit_sets_module_value(self, mock_waf_client):
         """wcu_limit kwarg propagates to the linter module."""

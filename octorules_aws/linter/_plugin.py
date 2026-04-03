@@ -1,7 +1,5 @@
 """AWS WAF lint plugin -- orchestrates all AWS-specific linter checks."""
 
-from __future__ import annotations
-
 import json
 from typing import Any
 

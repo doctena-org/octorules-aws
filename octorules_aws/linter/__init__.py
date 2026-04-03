@@ -1,7 +1,5 @@
 """AWS WAF linter -- registers all AWS-specific lint rules and plugins."""
 
-from __future__ import annotations
-
 _registered = False
 
 

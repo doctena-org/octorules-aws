@@ -1,7 +1,5 @@
 """Tests for the AWS WAF linter plugin."""
 
-from __future__ import annotations
-
 from octorules.linter.engine import LintContext, Severity
 from octorules.linter.plugin import get_registered_plugins
 

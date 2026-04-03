@@ -1,7 +1,5 @@
 """Shared helpers for collecting IPSet ARNs from AWS WAF statement trees."""
 
-from __future__ import annotations
-
 import re
 
 # ARN pattern to extract IP Set name

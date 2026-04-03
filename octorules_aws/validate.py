@@ -1,7 +1,5 @@
 """Offline validation for AWS WAF rules."""
 
-from __future__ import annotations
-
 import re
 
 from octorules.linter.engine import LintResult, Severity
@@ -252,8 +250,6 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
 
 
 # --- YAML structure checks (WA020-WA021) -----------------------------------
-
-
 def _check_unknown_fields(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     """WA020: Warn on unknown top-level rule fields."""
     unknown = set(rule) - _VALID_RULE_FIELDS
@@ -271,8 +267,6 @@ def _check_unknown_fields(rule: dict, results: list[LintResult], phase: str, ref
 
 
 # --- Best-practice checks (WA600) -------------------------------------------
-
-
 def _check_enabled(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     """WA600: Inform when a rule has enabled: false."""
     if rule.get("enabled") is False:
@@ -322,8 +316,6 @@ def _check_count_managed_group(rule: dict, results: list[LintResult], phase: str
 
 
 # --- Per-rule checks --------------------------------------------------------
-
-
 def _check_ref_format(ref: str, results: list[LintResult], phase: str) -> None:
     """WA010: Rule name must be 1-128 alphanumeric/underscore/hyphen characters."""
     if not ref:
@@ -751,8 +743,6 @@ def _check_statement(rule: dict, results: list[LintResult], phase: str, ref: str
 
 
 # --- Recursive statement validation -----------------------------------------
-
-
 def _validate_statement(
     stmt: dict,
     results: list[LintResult],
@@ -1004,8 +994,6 @@ def _check_geo_match(
 
 
 # --- Deep statement validation (WA314-WA318) --------------------------------
-
-
 def _check_statement_fields(
     stmt: dict,
     results: list[LintResult],
@@ -1638,8 +1626,6 @@ def _check_not(
 
 
 # --- ARN checks -------------------------------------------------------------
-
-
 def _check_arns(
     obj: dict | list,
     results: list[LintResult],
@@ -1754,6 +1740,38 @@ def _estimate_rule_wcu(rule: dict) -> int:
     return 1 + _estimate_wcu(stmt)
 
 
+# --- Compound statement recursion helper ------------------------------------
+def _recurse_into_compound(
+    stmt: dict,
+    callback,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """Walk compound statement children and invoke *callback* on each.
+
+    Handles And/Or/Not/RateBasedStatement nesting so callers don't need
+    to duplicate recursion logic.
+    """
+    for stype, inner in stmt.items():
+        if not isinstance(inner, dict):
+            continue
+        if stype in ("AndStatement", "OrStatement"):
+            stmts = inner.get("Statements", [])
+            if isinstance(stmts, list):
+                for s in stmts:
+                    if isinstance(s, dict):
+                        callback(s, results, phase, ref)
+        elif stype == "NotStatement":
+            nested = inner.get("Statement")
+            if isinstance(nested, dict):
+                callback(nested, results, phase, ref)
+        elif stype == "RateBasedStatement":
+            sds = inner.get("ScopeDownStatement")
+            if isinstance(sds, dict):
+                callback(sds, results, phase, ref)
+
+
 # --- Heuristic always-true/false/contradictory (WA341-WA343) ---------------
 
 _GEO_ALWAYS_TRUE_THRESHOLD = 200
@@ -1820,27 +1838,8 @@ def _check_heuristic_patterns(
             if isinstance(stmts, list):
                 _check_contradictory_geo(stmts, results, phase, ref)
 
-        # Recurse into compound statements
-        if stype == "AndStatement":
-            stmts = inner.get("Statements", [])
-            if isinstance(stmts, list):
-                for s in stmts:
-                    if isinstance(s, dict):
-                        _check_heuristic_patterns(s, results, phase, ref)
-        elif stype == "OrStatement":
-            stmts = inner.get("Statements", [])
-            if isinstance(stmts, list):
-                for s in stmts:
-                    if isinstance(s, dict):
-                        _check_heuristic_patterns(s, results, phase, ref)
-        elif stype == "NotStatement":
-            nested = inner.get("Statement")
-            if isinstance(nested, dict):
-                _check_heuristic_patterns(nested, results, phase, ref)
-        elif stype == "RateBasedStatement":
-            sds = inner.get("ScopeDownStatement")
-            if isinstance(sds, dict):
-                _check_heuristic_patterns(sds, results, phase, ref)
+    # Recurse into compound statements
+    _recurse_into_compound(stmt, _check_heuristic_patterns, results, phase, ref)
 
 
 def _check_contradictory_geo(
@@ -1884,8 +1883,6 @@ def _check_contradictory_geo(
 
 
 # --- Cross-rule checks ------------------------------------------------------
-
-
 def _check_duplicate_priorities(
     seen: dict[int, list[str]],
     results: list[LintResult],
