@@ -378,6 +378,14 @@ aws_waf_custom_rules:
 
 **Fix:** Give each rule a unique `ref`.
 
+### WA154 -- RuleLabels uses reserved namespace
+
+**Severity:** ERROR
+
+A `RuleLabels` entry has a `Name` starting with `aws:` or `awswaf:`. These prefixes are reserved by AWS WAF for managed labels and cannot be used in custom rules.
+
+**Fix:** Use a custom namespace prefix (e.g., `myapp:blocked`).
+
 ---
 
 ## Priority
@@ -430,6 +438,14 @@ aws_waf_custom_rules:
     Priority: 20
     ...
 ```
+
+### WA102 -- Non-contiguous rule priorities
+
+**Severity:** INFO
+
+Rule priorities within a phase have gaps (e.g., 10, 20, 50 — gap between 20 and 50). Non-contiguous priorities often indicate accidentally deleted rules or incomplete rollouts.
+
+**Fix:** Review whether the gap is intentional. Renumber if rules were removed.
 
 ---
 
@@ -1222,6 +1238,22 @@ The `InvalidFallbackBehavior` field in a `JsonBody` `FieldToMatch` must be one o
             InvalidFallbackBehavior: MATCH
 ```
 
+### WA156 -- ManagedRuleGroupStatement version not pinned
+
+**Severity:** WARNING
+
+A `ManagedRuleGroupStatement` does not have a `Version` field. Without version pinning, AWS automatically updates the managed rule group, which can change security behavior without notice.
+
+**Fix:** Add `Version` to pin to a specific release:
+
+```yaml
+    Statement:
+      ManagedRuleGroupStatement:
+        VendorName: AWS
+        Name: AWSManagedRulesCommonRuleSet
+        Version: "Version_1.0"
+```
+
 ---
 
 ## Action Parameters
@@ -1524,6 +1556,14 @@ lists:
 ```
 
 > **Note:** This check only fires when a `lists` section exists with at least one entry. If you don't use octorules-managed IP Sets, this rule won't fire.
+
+### WA158 -- IP set exceeds 10,000 address limit
+
+**Severity:** WARNING
+
+A list in the `lists` section has more than 10,000 items. AWS WAF limits IP sets to 10,000 CIDR entries.
+
+**Fix:** Split the list into multiple IP sets, or remove unused entries.
 
 ### WA340 -- Estimated total WCU exceeds Web ACL limit
 
