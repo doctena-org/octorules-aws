@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **74 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **75 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -118,6 +118,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA342](#wa342--contradictory-and-conditions-non-overlapping-geomatch-sets) | Contradictory AND conditions (non-overlapping GeoMatch sets) | WARNING |
 | [WA343](#wa343--always-false-pattern-sizeconstraint-size--0-is-impossible) | Always-false pattern (SizeConstraint size < 0 is impossible) | WARNING |
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
+| [WA601](#wa601--total-rule-count-may-exceed-default-web-acl-limit-of-100) | Total rule count may exceed default Web ACL limit of 100 | WARNING |
 | [WA602](#wa602--count-action-on-managedrulegroup-logs-all-traffic) | Count action on ManagedRuleGroup logs all traffic | INFO |
 
 ---
@@ -133,7 +134,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
 | WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |
-| WA600-WA602 | Best practice | 2 |
+| WA600-WA602 | Best practice | 3 |
 
 ---
 
@@ -1899,6 +1900,16 @@ aws_waf_custom_rules:
 ```
 
 **Fix:** Remove the rule entirely if it is no longer needed, or set `enabled: true` (or remove the `enabled` key) to re-enable it.
+
+### WA601 -- Total rule count may exceed default Web ACL limit of 100
+
+**Severity:** WARNING
+
+The total number of rules across all AWS WAF phases in this zone exceeds 100, which is the default Web ACL rule limit. AWS WAF enforces this limit at the account level; deployments that exceed it will be rejected by the API.
+
+**Triggers on:** a zone whose combined custom rules across all phases total more than 100.
+
+**Fix:** Reduce the number of rules, or request a limit increase from AWS Support (the limit can be raised up to 500 rules per Web ACL).
 
 ### WA602 -- Count action on ManagedRuleGroup logs all traffic
 

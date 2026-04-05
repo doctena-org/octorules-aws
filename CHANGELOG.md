@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ExcludedRules` is used.
 - WA327 lint rule — validates `RegexPatternSetReferenceStatement` ARN references
   against regex lists.
+- WA601 lint rule (WARNING) — warns when total rule count across AWS phases
+  may exceed the default Web ACL limit of 100.
 
 ### Fixed
 - `put_phase_rules` now preserves all mutable Web ACL fields (`TokenDomains`,
