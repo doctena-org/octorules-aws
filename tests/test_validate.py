@@ -263,6 +263,17 @@ class TestStatement:
         }
         assert "WA302" in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa302_nested_arn_no_duplicates(self):
+        """Compound statements must not produce duplicate WA302 results."""
+        stmt = {
+            "NotStatement": {
+                "Statement": {"IPSetReferenceStatement": {"ARN": "arn:azure:something:bad"}}
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa302s = [r for r in results if r.rule_id == "WA302"]
+        assert len(wa302s) == 1
+
     def test_wa302_non_arn_string_ignored(self):
         stmt = {
             "ByteMatchStatement": {
@@ -274,8 +285,8 @@ class TestStatement:
         }
         assert "WA302" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
-    def test_wa303_rate_limit_below_10(self):
-        stmt = {"RateBasedStatement": {"Limit": 5, "AggregateKeyType": "IP"}}
+    def test_wa303_rate_limit_below_100(self):
+        stmt = {"RateBasedStatement": {"Limit": 50, "AggregateKeyType": "IP"}}
         assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa303_rate_limit_not_integer(self):
@@ -286,9 +297,13 @@ class TestStatement:
         stmt = {"RateBasedStatement": {"Limit": True, "AggregateKeyType": "IP"}}
         assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
 
-    def test_wa303_rate_limit_exactly_10(self):
-        stmt = {"RateBasedStatement": {"Limit": 10, "AggregateKeyType": "IP"}}
+    def test_wa303_rate_limit_exactly_100(self):
+        stmt = {"RateBasedStatement": {"Limit": 100, "AggregateKeyType": "IP"}}
         assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa303_rate_limit_missing(self):
+        stmt = {"RateBasedStatement": {"AggregateKeyType": "IP"}}
+        assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa304_missing_aggregate_key_type(self):
         stmt = {"RateBasedStatement": {"Limit": 200}}
@@ -1652,6 +1667,24 @@ class TestCountManagedRuleGroup:
         r.pop("OverrideAction", None)
         assert "WA602" in _ids(validate_rules([r]))
 
+    def test_wa602_override_action_count_managed_no_scope_down(self):
+        """WA602 fires for OverrideAction: {Count: {}} on ManagedRuleGroupStatement."""
+        r = _rule(
+            Statement={
+                "ManagedRuleGroupStatement": {
+                    "VendorName": "AWS",
+                    "Name": "AWSManagedRulesCommonRuleSet",
+                }
+            },
+        )
+        # Web ACL-level managed rule groups use OverrideAction, not Action
+        r.pop("Action", None)
+        r["OverrideAction"] = {"Count": {}}
+        results = validate_rules([r])
+        assert "WA602" in _ids(results)
+        wa602 = [x for x in results if x.rule_id == "WA602"]
+        assert wa602[0].field == "OverrideAction"
+
     def test_wa602_count_managed_with_scope_down(self):
         r = _rule(
             Action={"Count": {}},
@@ -2907,6 +2940,21 @@ class TestGeoAlwaysTrue:
         }
         assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa341_nested_in_and_no_duplicate(self):
+        """WA341 fires exactly once for GeoMatch nested in AndStatement (no double-visit)."""
+        codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(200)]
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"GeoMatchStatement": {"CountryCodes": codes}},
+                    {"LabelMatchStatement": {"Scope": "LABEL", "Key": "test"}},
+                ]
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        wa341 = [r for r in results if r.rule_id == "WA341"]
+        assert len(wa341) == 1
+
 
 # ---------------------------------------------------------------------------
 # WA342  Contradictory AND conditions (non-overlapping GeoMatch sets)
@@ -3299,6 +3347,198 @@ class TestResultFactory:
         )
         assert r.field == "action"
         assert r.suggestion == "use block"
+
+
+# ---------------------------------------------------------------------------
+# WA157  ExcludedRules validation
+# ---------------------------------------------------------------------------
+class TestExcludedRulesValidation:
+    def _managed_rule(self, **mrg_extra):
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+                **mrg_extra,
+            }
+        }
+        r = _rule(Statement=stmt, OverrideAction={"None": {}})
+        del r["Action"]
+        return r
+
+    def test_wa157_excluded_rules_not_list(self):
+        r = self._managed_rule(ExcludedRules="not-a-list")
+        assert "WA157" in _ids(validate_rules([r]))
+
+    def test_wa157_excluded_rules_entry_not_dict(self):
+        r = self._managed_rule(ExcludedRules=["bare-string"])
+        assert "WA157" in _ids(validate_rules([r]))
+
+    def test_wa157_excluded_rules_entry_missing_name(self):
+        r = self._managed_rule(ExcludedRules=[{}])
+        assert "WA157" in _ids(validate_rules([r]))
+
+    def test_wa157_excluded_rules_name_not_string(self):
+        r = self._managed_rule(ExcludedRules=[{"Name": 123}])
+        assert "WA157" in _ids(validate_rules([r]))
+
+    def test_wa157_valid_excluded_rules(self):
+        r = self._managed_rule(
+            ExcludedRules=[{"Name": "SizeRestrictions_BODY"}],
+            RuleActionOverrides=[{"Name": "NoUserAgent_HEADER", "ActionToUse": {"Count": {}}}],
+        )
+        assert "WA157" not in _ids(validate_rules([r]))
+
+    def test_wa157_multiple_invalid_entries(self):
+        r = self._managed_rule(ExcludedRules=[42, {"Name": True}])
+        wa157 = [x for x in validate_rules([r]) if x.rule_id == "WA157"]
+        assert len(wa157) == 2
+
+    def test_wa157_empty_list_ok(self):
+        r = self._managed_rule(
+            ExcludedRules=[],
+            RuleActionOverrides=[{"Name": "NoUserAgent_HEADER", "ActionToUse": {"Count": {}}}],
+        )
+        assert "WA157" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA159  RuleActionOverrides entry missing Name or ActionToUse
+# ---------------------------------------------------------------------------
+class TestRuleActionOverridesValidation:
+    def _managed_rule(self, **mrg_extra):
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+                **mrg_extra,
+            }
+        }
+        r = _rule(Statement=stmt, OverrideAction={"None": {}})
+        del r["Action"]
+        return r
+
+    def test_wa159_entry_not_dict(self):
+        r = self._managed_rule(RuleActionOverrides=["bare-string"])
+        assert "WA159" in _ids(validate_rules([r]))
+
+    def test_wa159_entry_missing_name(self):
+        r = self._managed_rule(RuleActionOverrides=[{"ActionToUse": {"Count": {}}}])
+        assert "WA159" in _ids(validate_rules([r]))
+
+    def test_wa159_entry_missing_action_to_use(self):
+        r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule"}])
+        assert "WA159" in _ids(validate_rules([r]))
+
+    def test_wa159_entry_name_not_string(self):
+        r = self._managed_rule(RuleActionOverrides=[{"Name": 42, "ActionToUse": {"Count": {}}}])
+        assert "WA159" in _ids(validate_rules([r]))
+
+    def test_wa159_entry_action_to_use_not_dict(self):
+        r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": "Count"}])
+        assert "WA159" in _ids(validate_rules([r]))
+
+    def test_wa159_valid_entry(self):
+        r = self._managed_rule(
+            RuleActionOverrides=[{"Name": "SizeRestrictions_BODY", "ActionToUse": {"Count": {}}}]
+        )
+        assert "WA159" not in _ids(validate_rules([r]))
+
+    def test_wa159_multiple_entries_one_bad(self):
+        r = self._managed_rule(
+            RuleActionOverrides=[
+                {"Name": "GoodRule", "ActionToUse": {"Count": {}}},
+                {"Name": "BadRule"},
+            ]
+        )
+        wa159 = [x for x in validate_rules([r]) if x.rule_id == "WA159"]
+        assert len(wa159) == 1
+
+    def test_wa159_entry_missing_both(self):
+        r = self._managed_rule(RuleActionOverrides=[{}])
+        wa159 = [x for x in validate_rules([r]) if x.rule_id == "WA159"]
+        assert len(wa159) == 1
+        assert "Name" in wa159[0].message
+        assert "ActionToUse" in wa159[0].message
+
+
+# ---------------------------------------------------------------------------
+# WA160  RuleActionOverrides ActionToUse has invalid action
+# ---------------------------------------------------------------------------
+class TestRuleActionOverridesInvalidAction:
+    def _managed_rule(self, **mrg_extra):
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+                **mrg_extra,
+            }
+        }
+        r = _rule(Statement=stmt, OverrideAction={"None": {}})
+        del r["Action"]
+        return r
+
+    def test_wa160_invalid_action(self):
+        r = self._managed_rule(
+            RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Invalid": {}}}]
+        )
+        assert "WA160" in _ids(validate_rules([r]))
+
+    def test_wa160_empty_action_to_use(self):
+        r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {}}])
+        assert "WA160" in _ids(validate_rules([r]))
+
+    def test_wa160_multiple_actions_in_action_to_use(self):
+        r = self._managed_rule(
+            RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Count": {}, "Block": {}}}]
+        )
+        assert "WA160" in _ids(validate_rules([r]))
+
+    @pytest.mark.parametrize("action", ["Allow", "Block", "Count", "Captcha", "Challenge"])
+    def test_wa160_all_valid_actions(self, action):
+        r = self._managed_rule(
+            RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {action: {}}}]
+        )
+        assert "WA160" not in _ids(validate_rules([r]))
+
+
+# ---------------------------------------------------------------------------
+# WA161  Deprecated ExcludedRules — suggest RuleActionOverrides
+# ---------------------------------------------------------------------------
+class TestDeprecatedExcludedRules:
+    def _managed_rule(self, **mrg_extra):
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+                **mrg_extra,
+            }
+        }
+        r = _rule(Statement=stmt, OverrideAction={"None": {}})
+        del r["Action"]
+        return r
+
+    def test_wa161_excluded_rules_without_overrides(self):
+        r = self._managed_rule(ExcludedRules=[{"Name": "SomeRule"}])
+        assert "WA161" in _ids(validate_rules([r]))
+
+    def test_wa161_excluded_rules_with_overrides(self):
+        r = self._managed_rule(
+            ExcludedRules=[{"Name": "SomeRule"}],
+            RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Count": {}}}],
+        )
+        assert "WA161" not in _ids(validate_rules([r]))
+
+    def test_wa161_no_excluded_rules(self):
+        r = self._managed_rule()
+        assert "WA161" not in _ids(validate_rules([r]))
+
+    def test_wa161_suggestion_present(self):
+        r = self._managed_rule(ExcludedRules=[{"Name": "SomeRule"}])
+        results = validate_rules([r])
+        wa161 = [x for x in results if x.rule_id == "WA161"]
+        assert len(wa161) == 1
+        assert wa161[0].suggestion
+        assert "RuleActionOverrides" in wa161[0].suggestion
 
 
 class TestIsStrictInt:

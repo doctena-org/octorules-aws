@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-04-05
+
+### Added
+- `aws_waf_settings` extension — manage Web ACL-level settings (`DefaultAction`,
+  `ChallengeConfig`, `CaptchaConfig`, `TokenDomains`, `AssociationConfig`,
+  `CustomResponseBodies`) as code.
+- Regex Pattern Set support in lists (`kind: regex`) — full CRUD lifecycle for
+  `RegexPatternSetReferenceStatement` references.
+- WA157 lint rule — validates `ExcludedRules` structure in
+  `ManagedRuleGroupStatement`.
+- WA159 lint rule — validates `RuleActionOverrides` entry structure.
+- WA160 lint rule — validates `RuleActionOverrides` action values.
+- WA161 lint rule (INFO) — suggests `RuleActionOverrides` when deprecated
+  `ExcludedRules` is used.
+- WA327 lint rule — validates `RegexPatternSetReferenceStatement` ARN references
+  against regex lists.
+
+### Fixed
+- `put_phase_rules` now preserves all mutable Web ACL fields (`TokenDomains`,
+  `ChallengeConfig`, `CaptchaConfig`, `AssociationConfig`,
+  `CustomResponseBodies`) during sync — previously silently reset on every sync.
+- `_WCU_LIMIT` was a bare global int — replaced with `contextvars.ContextVar`
+  for thread-safe per-context isolation.
+- `get_all_custom_rulesets` crashed with `ConfigError` on unknown ruleset IDs —
+  now logs a warning and skips.
+- WA602 (`Count` action on managed rule group) only checked `Action` field —
+  now also checks `OverrideAction` (the field used at Web ACL level).
+- `_check_heuristic_patterns` double-visited nested statements via redundant
+  `_recurse_into_compound` call — removed, eliminating duplicate WA341/WA342/WA343
+  warnings.
+- `RegexPatternSetReferenceStatement` missing from `_WCU_TEXT_TRANSFORM_TYPES` —
+  WCU estimates now include per-TextTransformation cost for this statement type.
+- `_paginate_list` could raise `TypeError` if AWS returned `None` for a response
+  key — changed to `or []` fallback.
+- WA158 (IP set item count) compared raw entry count including duplicates — now
+  deduplicates before comparing against the 10,000 limit, matching AWS behavior.
+- WA302 (ARN format mismatch) used recursive deep traversal — changed to
+  statement-level only, eliminating duplicate warnings in compound statements.
+- WA303 (RateBasedStatement.Limit) only validated when `Limit` was present —
+  now also fires when `Limit` is entirely missing from `RateBasedStatement`.
+- WA303 minimum `Limit` threshold corrected from 10 to 100 to match the AWS
+  WAF API requirement.
+
+### Changed
+- `register_aws_linter` now uses double-checked locking with `threading.Lock`
+  for thread-safe registration.
+
 ## [0.6.1] - 2026-04-03
 
 ### Changed

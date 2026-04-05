@@ -71,7 +71,9 @@ Safety thresholds are configured under `safety:` (framework-owned, not forwarded
 |---------|--------|-------------|
 | Phase rules (4 phases) | Supported | Web ACL rules |
 | Custom rulesets | Supported | Rule Groups |
-| Lists (IP only) | Supported | IP Sets |
+| Lists (IP) | Supported | IP Sets |
+| Lists (regex) | Supported | Regex Pattern Sets |
+| Web ACL settings | Supported | DefaultAction, ChallengeConfig, CaptchaConfig, TokenDomains, AssociationConfig, CustomResponseBodies |
 | Page Shield | Not supported | — |
 | Zone discovery (`list_zones`) | Supported | Lists Web ACLs |
 | Account-level scopes | Not supported | — |
@@ -157,9 +159,9 @@ more capacity, delete and recreate the Rule Group with a higher value.
 - `id` is optional: present for existing Rule Groups, absent for new ones.
 - After creation, use `octorules dump` to export the assigned `id` back to YAML.
 
-## Lists (IP Sets)
+## Lists (IP Sets & Regex Pattern Sets)
 
-AWS WAF IP Sets map to octorules lists. Add a `lists` section to your rules file:
+AWS WAF IP Sets and Regex Pattern Sets map to octorules lists. Add a `lists` section to your rules file:
 
 ```yaml
 # rules/my-web-acl.yaml
@@ -170,24 +172,33 @@ lists:
     items:
       - ip: "1.2.3.4/32"
       - ip: "10.0.0.0/8"
+
+  - name: bad-ua-patterns
+    kind: regex
+    description: "Bad user-agent patterns"
+    items:
+      - pattern: "BadBot.*"
+      - pattern: "EvilCrawler/\\d+"
 ```
 
-> **Note:** AWS WAF only supports IP lists (`kind: ip`). ASN, hostname, and redirect list kinds are not available.
+IP lists (`kind: ip`) map to AWS WAF IP Sets. Regex lists (`kind: regex`) map to AWS WAF Regex Pattern Sets and are referenced via `RegexPatternSetReferenceStatement`.
+
+> **Note:** ASN, hostname, and redirect list kinds are not available for AWS WAF.
 
 ## Linting
 
-59 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
+74 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
 
 | Prefix | Category | Rules |
 |--------|----------|-------|
-| WA001-WA005, WA010, WA020-WA022 | Structure & YAML | 9 |
-| WA100-WA101 | Priority | 2 |
+| WA001-WA005, WA010, WA020-WA022, WA154 | Structure & YAML | 10 |
+| WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA300-WA343 | Statement deep validation | 33 |
-| WA350-WA353 | Action parameters | 4 |
+| WA156-WA161, WA300-WA343 | Statement deep validation | 39 |
+| WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA326, WA340, WA500-WA501, WA520 | Cross-rule | 5 |
-| WA600 | Best practice | 1 |
+| WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |
+| WA600-WA602 | Best practice | 2 |
 
 ```bash
 octorules lint --config config.yaml

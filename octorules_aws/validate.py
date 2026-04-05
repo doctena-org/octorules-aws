@@ -286,9 +286,13 @@ def _check_enabled(rule: dict, results: list[LintResult], phase: str, ref: str) 
 def _check_count_managed_group(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     """WA602: Count action on ManagedRuleGroupStatement without ScopeDownStatement."""
     action = rule.get("Action")
-    if not isinstance(action, dict):
-        return
-    if "Count" not in action:
+    override_action = rule.get("OverrideAction")
+    # Check both Action and OverrideAction — managed rule groups referenced
+    # from a Web ACL use OverrideAction, while those in a Rule Group use Action.
+    has_count = (isinstance(action, dict) and "Count" in action) or (
+        isinstance(override_action, dict) and "Count" in override_action
+    )
+    if not has_count:
         return
     stmt = rule.get("Statement")
     if not isinstance(stmt, dict):
@@ -298,6 +302,11 @@ def _check_count_managed_group(rule: dict, results: list[LintResult], phase: str
     mrg = stmt["ManagedRuleGroupStatement"]
     if isinstance(mrg, dict) and "ScopeDownStatement" in mrg:
         return
+    field = (
+        "OverrideAction"
+        if (isinstance(override_action, dict) and "Count" in override_action)
+        else "Action"
+    )
     results.append(
         _result(
             rule_id="WA602",
@@ -310,7 +319,7 @@ def _check_count_managed_group(rule: dict, results: list[LintResult], phase: str
             ),
             phase=phase,
             ref=ref,
-            field="Action",
+            field=field,
         )
     )
 
@@ -803,7 +812,8 @@ def _validate_statement(
     # Deep validation (WA314-WA318)
     _check_statement_fields(stmt, results, phase, ref)
 
-    # Heuristic patterns (WA341-WA343) — non-recursive, has own recursion
+    # Heuristic patterns (WA341-WA343) — leaf-level only; recursion is
+    # handled by _check_compound/_check_not below.
     _check_heuristic_patterns(stmt, results, phase, ref)
 
     # Recurse into compound statements
@@ -826,25 +836,36 @@ def _check_rate_based(
     if not isinstance(rbs, dict):
         return
 
-    if "Limit" in rbs:
+    if "Limit" not in rbs:
+        results.append(
+            _result(
+                rule_id="WA303",
+                severity=Severity.ERROR,
+                message="RateBasedStatement requires a 'Limit' field",
+                phase=phase,
+                ref=ref,
+                field="Statement.RateBasedStatement.Limit",
+            )
+        )
+    else:
         lim = rbs["Limit"]
         if not _is_strict_int(lim):
             results.append(
                 _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
-                    message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
+                    message=f"RateBasedStatement.Limit must be an integer >= 100, got {lim!r}",
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.Limit",
                 )
             )
-        elif lim < 10:
+        elif lim < 100:
             results.append(
                 _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
-                    message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
+                    message=f"RateBasedStatement.Limit must be an integer >= 100, got {lim!r}",
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.Limit",
@@ -1088,6 +1109,10 @@ def _check_statement_fields(
                 )
             )
 
+        # WA157/WA159-WA161: Managed rule group config validation
+        if stype == "ManagedRuleGroupStatement":
+            _check_managed_rule_group_config(inner, results, phase, ref)
+
         # WA315: Enum validation
         _check_statement_enums(stype, inner, results, phase, ref)
 
@@ -1102,6 +1127,128 @@ def _check_statement_fields(
         # WA318: RateBasedStatement conditional requirements
         if stype == "RateBasedStatement":
             _check_rate_based_conditional(inner, results, phase, ref)
+
+
+def _check_managed_rule_group_config(
+    inner: dict,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA157/WA159-WA161: Validate ManagedRuleGroupStatement config fields."""
+    _prefix = "Statement.ManagedRuleGroupStatement"
+
+    # WA157: ExcludedRules must be a list of dicts with Name
+    if "ExcludedRules" in inner:
+        excluded = inner["ExcludedRules"]
+        if not isinstance(excluded, list):
+            results.append(
+                _result(
+                    rule_id="WA157",
+                    severity=Severity.ERROR,
+                    message="ExcludedRules must be a list",
+                    phase=phase,
+                    ref=ref,
+                    field=f"{_prefix}.ExcludedRules",
+                )
+            )
+        else:
+            for idx, entry in enumerate(excluded):
+                if not isinstance(entry, dict):
+                    results.append(
+                        _result(
+                            rule_id="WA157",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"ExcludedRules[{idx}] must be a dict, got {type(entry).__name__}"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{_prefix}.ExcludedRules[{idx}]",
+                        )
+                    )
+                elif "Name" not in entry or not isinstance(entry.get("Name"), str):
+                    results.append(
+                        _result(
+                            rule_id="WA157",
+                            severity=Severity.ERROR,
+                            message=f"ExcludedRules[{idx}] missing required 'Name' string field",
+                            phase=phase,
+                            ref=ref,
+                            field=f"{_prefix}.ExcludedRules[{idx}].Name",
+                        )
+                    )
+
+    # WA159: RuleActionOverrides entry missing Name or ActionToUse
+    if "RuleActionOverrides" in inner:
+        overrides = inner["RuleActionOverrides"]
+        if isinstance(overrides, list):
+            for idx, entry in enumerate(overrides):
+                if not isinstance(entry, dict):
+                    results.append(
+                        _result(
+                            rule_id="WA159",
+                            severity=Severity.ERROR,
+                            message=f"RuleActionOverrides[{idx}] must be a dict",
+                            phase=phase,
+                            ref=ref,
+                            field=f"{_prefix}.RuleActionOverrides[{idx}]",
+                        )
+                    )
+                    continue
+                missing = []
+                if "Name" not in entry or not isinstance(entry.get("Name"), str):
+                    missing.append("Name")
+                if "ActionToUse" not in entry or not isinstance(entry.get("ActionToUse"), dict):
+                    missing.append("ActionToUse")
+                if missing:
+                    results.append(
+                        _result(
+                            rule_id="WA159",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"RuleActionOverrides[{idx}] missing required"
+                                f" field(s): {', '.join(missing)}"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{_prefix}.RuleActionOverrides[{idx}]",
+                        )
+                    )
+                    continue
+
+                # WA160: ActionToUse has invalid action
+                action_to_use = entry["ActionToUse"]
+                action_keys = set(action_to_use)
+                if len(action_keys) != 1 or not action_keys.issubset(_VALID_ACTIONS):
+                    results.append(
+                        _result(
+                            rule_id="WA160",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"RuleActionOverrides[{idx}].ActionToUse must contain"
+                                f" exactly one of {sorted(_VALID_ACTIONS)},"
+                                f" got {sorted(action_keys)}"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{_prefix}.RuleActionOverrides[{idx}].ActionToUse",
+                        )
+                    )
+
+    # WA161: Deprecated ExcludedRules — suggest migration
+    if "ExcludedRules" in inner and "RuleActionOverrides" not in inner:
+        results.append(
+            _result(
+                rule_id="WA161",
+                severity=Severity.INFO,
+                message="ExcludedRules is deprecated — use RuleActionOverrides instead",
+                phase=phase,
+                ref=ref,
+                field=f"{_prefix}.ExcludedRules",
+                suggestion="Migrate to RuleActionOverrides with ActionToUse: {Count: {}}",
+            )
+        )
 
 
 def _check_statement_enums(
@@ -1627,14 +1774,21 @@ def _check_not(
 
 # --- ARN checks -------------------------------------------------------------
 def _check_arns(
-    obj: dict | list,
+    stmt: dict,
     results: list[LintResult],
     phase: str,
     ref: str,
 ) -> None:
-    """Warn on ARN strings that don't look like WAFv2 ARNs."""
-    if isinstance(obj, dict):
-        for key, val in obj.items():
+    """Warn on ARN strings that don't look like WAFv2 ARNs.
+
+    Only inspects the immediate inner dict of *stmt* (e.g. the value inside
+    ``{"IPSetReferenceStatement": {...}}``).  Does NOT recurse into nested
+    dicts/lists — ``_validate_statement`` already handles compound children.
+    """
+    for inner in stmt.values():
+        if not isinstance(inner, dict):
+            continue
+        for key, val in inner.items():
             if isinstance(val, str) and val.startswith("arn:") and not _ARN_RE.match(val):
                 results.append(
                     _result(
@@ -1646,12 +1800,6 @@ def _check_arns(
                         field=key,
                     )
                 )
-            elif isinstance(val, (dict, list)):
-                _check_arns(val, results, phase, ref)
-    elif isinstance(obj, list):
-        for item in obj:
-            if isinstance(item, (dict, list)):
-                _check_arns(item, results, phase, ref)
 
 
 # --- WCU estimation (WA340) -------------------------------------------------
@@ -1677,6 +1825,7 @@ _WCU_TEXT_TRANSFORM_TYPES = frozenset(
     {
         "ByteMatchStatement",
         "RegexMatchStatement",
+        "RegexPatternSetReferenceStatement",
         "SizeConstraintStatement",
         "SqliMatchStatement",
         "XssMatchStatement",
@@ -1738,38 +1887,6 @@ def _estimate_rule_wcu(rule: dict) -> int:
     if not isinstance(stmt, dict):
         return 1
     return 1 + _estimate_wcu(stmt)
-
-
-# --- Compound statement recursion helper ------------------------------------
-def _recurse_into_compound(
-    stmt: dict,
-    callback,
-    results: list[LintResult],
-    phase: str,
-    ref: str,
-) -> None:
-    """Walk compound statement children and invoke *callback* on each.
-
-    Handles And/Or/Not/RateBasedStatement nesting so callers don't need
-    to duplicate recursion logic.
-    """
-    for stype, inner in stmt.items():
-        if not isinstance(inner, dict):
-            continue
-        if stype in ("AndStatement", "OrStatement"):
-            stmts = inner.get("Statements", [])
-            if isinstance(stmts, list):
-                for s in stmts:
-                    if isinstance(s, dict):
-                        callback(s, results, phase, ref)
-        elif stype == "NotStatement":
-            nested = inner.get("Statement")
-            if isinstance(nested, dict):
-                callback(nested, results, phase, ref)
-        elif stype == "RateBasedStatement":
-            sds = inner.get("ScopeDownStatement")
-            if isinstance(sds, dict):
-                callback(sds, results, phase, ref)
 
 
 # --- Heuristic always-true/false/contradictory (WA341-WA343) ---------------
@@ -1838,8 +1955,9 @@ def _check_heuristic_patterns(
             if isinstance(stmts, list):
                 _check_contradictory_geo(stmts, results, phase, ref)
 
-    # Recurse into compound statements
-    _recurse_into_compound(stmt, _check_heuristic_patterns, results, phase, ref)
+    # No explicit recursion here -- _validate_statement already recurses into
+    # compound children via _check_compound/_check_not, which call
+    # _validate_statement (and thus _check_heuristic_patterns) on each child.
 
 
 def _check_contradictory_geo(

@@ -243,6 +243,94 @@ class TestPutPhaseRules:
             provider.put_phase_rules(_zs(), "aws_waf_custom", [])
         assert mock_waf_client.update_web_acl.call_count == 1
 
+    def test_preserves_optional_acl_settings(self, mock_waf_client):
+        """put_phase_rules passes through optional Web ACL fields like
+        TokenDomains, ChallengeConfig, CaptchaConfig, AssociationConfig,
+        and CustomResponseBodies — and strips read-only fields."""
+        acl_with_extras = {
+            "Name": "my-acl",
+            "Id": "acl-123",
+            "DefaultAction": {"Allow": {}},
+            "VisibilityConfig": {"SampledRequestsEnabled": True},
+            "Rules": [],
+            # Read-only fields (must NOT appear in update call)
+            "ARN": "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/my-acl/acl-123",
+            "Capacity": 100,
+            "LabelNamespace": "awswaf:123456789012:webacl:my-acl:",
+            "ManagedByFirewallManager": False,
+            "PostProcessFirewallManagerRuleGroups": [],
+            "PreProcessFirewallManagerRuleGroups": [],
+            "RetrofittedByFirewallManager": False,
+            # Optional mutable fields (must be preserved)
+            "TokenDomains": ["example.com", "api.example.com"],
+            "ChallengeConfig": {
+                "ImmunityTimeProperty": {"ImmunityTime": 300},
+            },
+            "CaptchaConfig": {
+                "ImmunityTimeProperty": {"ImmunityTime": 120},
+            },
+            "AssociationConfig": {
+                "RequestBody": {
+                    "API_GATEWAY": {"DefaultSizeInspectionLimit": "KB_64"},
+                },
+            },
+            "CustomResponseBodies": {
+                "blocked": {
+                    "ContentType": "TEXT_HTML",
+                    "Content": "<h1>Blocked</h1>",
+                },
+            },
+        }
+        mock_waf_client.list_web_acls.return_value = {
+            "WebACLs": [{"Name": "my-acl", "Id": "acl-123", "ARN": "arn:acl"}]
+        }
+        mock_waf_client.get_web_acl.return_value = {
+            "WebACL": acl_with_extras,
+            "LockToken": "lock-42",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.resolve_zone_id("my-acl")
+
+        provider.put_phase_rules(_zs(), "aws_waf_custom", [])
+
+        call_kwargs = mock_waf_client.update_web_acl.call_args[1]
+
+        # Optional mutable fields must be present
+        assert call_kwargs["TokenDomains"] == ["example.com", "api.example.com"]
+        assert call_kwargs["ChallengeConfig"] == {
+            "ImmunityTimeProperty": {"ImmunityTime": 300},
+        }
+        assert call_kwargs["CaptchaConfig"] == {
+            "ImmunityTimeProperty": {"ImmunityTime": 120},
+        }
+        assert call_kwargs["AssociationConfig"] == {
+            "RequestBody": {
+                "API_GATEWAY": {"DefaultSizeInspectionLimit": "KB_64"},
+            },
+        }
+        assert call_kwargs["CustomResponseBodies"] == {
+            "blocked": {
+                "ContentType": "TEXT_HTML",
+                "Content": "<h1>Blocked</h1>",
+            },
+        }
+
+        # Read-only fields must NOT be present
+        assert "ARN" not in call_kwargs
+        assert "Capacity" not in call_kwargs
+        assert "LabelNamespace" not in call_kwargs
+        assert "ManagedByFirewallManager" not in call_kwargs
+        assert "PostProcessFirewallManagerRuleGroups" not in call_kwargs
+        assert "PreProcessFirewallManagerRuleGroups" not in call_kwargs
+        assert "RetrofittedByFirewallManager" not in call_kwargs
+
+        # Standard fields still present
+        assert call_kwargs["Name"] == "my-acl"
+        assert call_kwargs["Id"] == "acl-123"
+        assert call_kwargs["Scope"] == "REGIONAL"
+        assert call_kwargs["LockToken"] == "lock-42"
+        assert call_kwargs["DefaultAction"] == {"Allow": {}}
+
 
 class TestGetAllPhaseRules:
     def test_all_phases(self, mock_waf_client, web_acl):
@@ -1742,40 +1830,313 @@ class TestPaginationEdgeCases:
 class TestWcuLimitKwarg:
     def test_wcu_limit_sets_module_value(self, mock_waf_client):
         """wcu_limit kwarg propagates to the linter module."""
-        from octorules_aws.linter._plugin import _WCU_LIMIT
+        from octorules_aws.linter._plugin import _wcu_limit_var, set_wcu_limit
 
-        original = _WCU_LIMIT
+        original = _wcu_limit_var.get()
         try:
             AwsWafProvider(client=mock_waf_client, wcu_limit=3000)
-            from octorules_aws.linter._plugin import _WCU_LIMIT as new_val
-
-            assert new_val == 3000
+            assert _wcu_limit_var.get() == 3000
         finally:
-            from octorules_aws.linter._plugin import set_wcu_limit
-
             set_wcu_limit(original)
 
     def test_wcu_limit_string_converted(self, mock_waf_client):
         """String wcu_limit is converted to int."""
-        from octorules_aws.linter._plugin import _WCU_LIMIT
+        from octorules_aws.linter._plugin import _wcu_limit_var, set_wcu_limit
 
-        original = _WCU_LIMIT
+        original = _wcu_limit_var.get()
         try:
             AwsWafProvider(client=mock_waf_client, wcu_limit="5000")
-            from octorules_aws.linter._plugin import _WCU_LIMIT as new_val
-
-            assert new_val == 5000
+            assert _wcu_limit_var.get() == 5000
         finally:
-            from octorules_aws.linter._plugin import set_wcu_limit
-
             set_wcu_limit(original)
 
     def test_wcu_limit_none_keeps_default(self, mock_waf_client):
         """None wcu_limit leaves the default unchanged."""
-        from octorules_aws.linter._plugin import _WCU_LIMIT
+        from octorules_aws.linter._plugin import _wcu_limit_var
 
-        original = _WCU_LIMIT
+        original = _wcu_limit_var.get()
         AwsWafProvider(client=mock_waf_client, wcu_limit=None)
-        from octorules_aws.linter._plugin import _WCU_LIMIT as after
+        assert _wcu_limit_var.get() == original
 
-        assert after == original
+
+class TestNormalizationRoundTrip:
+    """Verify normalize -> denormalize preserves rule structure."""
+
+    def test_custom_rule_round_trip(self):
+        from octorules_aws.provider import _denormalize_rule, _normalize_rule
+
+        api_rule = {
+            "Name": "block-ips",
+            "Priority": 1,
+            "Action": {"Block": {}},
+            "Statement": {"IPSetReferenceStatement": {"ARN": "arn:aws:wafv2:ip-set"}},
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": "block-ips",
+            },
+        }
+        normalized = _normalize_rule(api_rule)
+        assert normalized["ref"] == "block-ips"
+        assert "Name" not in normalized
+
+        denormalized = _denormalize_rule(normalized)
+        assert denormalized["Name"] == "block-ips"
+        assert "ref" not in denormalized
+        assert denormalized["Priority"] == 1
+        assert denormalized["Action"] == {"Block": {}}
+
+    def test_rule_with_bytes_search_string(self):
+        from octorules_aws.provider import _normalize_rule
+
+        api_rule = {
+            "Name": "byte-rule",
+            "Statement": {
+                "ByteMatchStatement": {"SearchString": b"test-pattern"},
+            },
+        }
+        normalized = _normalize_rule(api_rule)
+        stmt = normalized["Statement"]["ByteMatchStatement"]
+        assert isinstance(stmt["SearchString"], str)
+        assert stmt["SearchString"] == "test-pattern"
+
+
+# ---------------------------------------------------------------------------
+# Regex Pattern Sets
+# ---------------------------------------------------------------------------
+class TestRegexPatternSets:
+    def test_list_lists_includes_regex(self, mock_waf_client):
+        """list_lists returns both IP sets and regex pattern sets."""
+        mock_waf_client.list_ip_sets.return_value = {
+            "IPSets": [{"Id": "ip-1", "Name": "blocklist", "Description": "IPs"}]
+        }
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [
+                {"Id": "rps-1", "Name": "bad-paths", "Description": "Path patterns"}
+            ]
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.list_lists(_zs())
+        assert len(result) == 2
+        names = {r["name"] for r in result}
+        assert names == {"blocklist", "bad-paths"}
+        kinds = {r["name"]: r["kind"] for r in result}
+        assert kinds["blocklist"] == "ip"
+        assert kinds["bad-paths"] == "regex"
+
+    def test_create_list_regex(self, mock_waf_client):
+        """create_list with kind=regex calls create_regex_pattern_set."""
+        mock_waf_client.create_regex_pattern_set.return_value = {
+            "Summary": {"Id": "rps-new", "Name": "new-patterns"}
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.create_list(_zs(), "new-patterns", "regex", "desc")
+        assert result["id"] == "rps-new"
+        mock_waf_client.create_regex_pattern_set.assert_called_once()
+        call_kwargs = mock_waf_client.create_regex_pattern_set.call_args[1]
+        assert call_kwargs["Name"] == "new-patterns"
+        assert call_kwargs["Description"] == "desc"
+        assert call_kwargs["RegularExpressionList"] == []
+
+    def test_create_list_regex_missing_id(self, mock_waf_client):
+        """create_list raises ProviderError when regex set Summary.Id is missing."""
+        mock_waf_client.create_regex_pattern_set.return_value = {"Summary": {}}
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="missing Summary.Id"):
+            provider.create_list(_zs(), "new-patterns", "regex")
+
+    def test_create_list_ip_still_works(self, mock_waf_client):
+        """create_list with kind=ip still calls create_ip_set."""
+        mock_waf_client.create_ip_set.return_value = {
+            "Summary": {"Id": "ip-new", "Name": "new-set"}
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.create_list(_zs(), "new-set", "ip")
+        assert result["id"] == "ip-new"
+        mock_waf_client.create_ip_set.assert_called_once()
+
+    def test_delete_list_regex(self, mock_waf_client):
+        """delete_list falls back to regex pattern set when IP set not found."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.delete_list(_zs(), "rps-1")
+        mock_waf_client.delete_regex_pattern_set.assert_called_once()
+
+    def test_delete_list_ip_still_works(self, mock_waf_client):
+        """delete_list deletes IP set when found."""
+        mock_waf_client.list_ip_sets.return_value = {
+            "IPSets": [{"Id": "ip-1", "Name": "blocklist"}]
+        }
+        mock_waf_client.get_ip_set.return_value = {
+            "IPSet": {},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.delete_list(_zs(), "ip-1")
+        mock_waf_client.delete_ip_set.assert_called_once()
+
+    def test_get_list_items_regex(self, mock_waf_client):
+        """get_list_items falls back to regex pattern set items."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {
+                "RegularExpressionList": [
+                    {"RegexString": "^/admin"},
+                    {"RegexString": "^/secret"},
+                ]
+            },
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        items = provider.get_list_items(_zs(), "rps-1")
+        assert items == [{"regex": "^/admin"}, {"regex": "^/secret"}]
+
+    def test_get_list_items_regex_empty(self, mock_waf_client):
+        """Regex Pattern Set with no patterns returns empty list."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "empty-set"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": []},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        items = provider.get_list_items(_zs(), "rps-1")
+        assert items == []
+
+    def test_put_list_items_regex(self, mock_waf_client):
+        """put_list_items with regex items updates regex pattern set."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": []},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        op_id = provider.put_list_items(
+            _zs(), "rps-1", [{"regex": "^/admin"}, {"regex": "^/secret"}]
+        )
+        assert op_id.startswith("aws-sync-")
+        call_kwargs = mock_waf_client.update_regex_pattern_set.call_args[1]
+        assert call_kwargs["RegularExpressionList"] == [
+            {"RegexString": "^/admin"},
+            {"RegexString": "^/secret"},
+        ]
+
+    def test_put_list_items_regex_value_key(self, mock_waf_client):
+        """put_list_items accepts 'value' key for regex items."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": []},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        op_id = provider.put_list_items(_zs(), "rps-1", [{"value": "^/admin"}])
+        assert op_id.startswith("aws-sync-")
+
+    def test_put_list_items_regex_malformed(self, mock_waf_client):
+        """put_list_items rejects items without regex or value key."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": []},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        with pytest.raises(ProviderError, match="missing 'regex' or 'value' key"):
+            provider.put_list_items(_zs(), "rps-1", [{"bogus": "data"}])
+
+    def test_get_all_lists_includes_regex(self, mock_waf_client):
+        """get_all_lists returns both IP sets and regex pattern sets."""
+        mock_waf_client.list_ip_sets.return_value = {
+            "IPSets": [{"Id": "ip-1", "Name": "blocklist", "Description": "IPs"}]
+        }
+        mock_waf_client.get_ip_set.return_value = {
+            "IPSet": {"Addresses": ["1.1.1.1/32"]},
+            "LockToken": "l1",
+        }
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths", "Description": "patterns"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": [{"RegexString": "^/admin"}]},
+            "LockToken": "l2",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.get_all_lists(_zs())
+        assert "blocklist" in result
+        assert "bad-paths" in result
+        assert result["blocklist"]["kind"] == "ip"
+        assert result["blocklist"]["items"] == [{"ip": "1.1.1.1/32"}]
+        assert result["bad-paths"]["kind"] == "regex"
+        assert result["bad-paths"]["items"] == [{"regex": "^/admin"}]
+
+    def test_get_all_lists_filtered_regex(self, mock_waf_client):
+        """get_all_lists with list_names filter works with regex sets."""
+        mock_waf_client.list_ip_sets.return_value = {
+            "IPSets": [{"Id": "ip-1", "Name": "blocklist", "Description": "IPs"}]
+        }
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths", "Description": "patterns"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": [{"RegexString": "^/admin"}]},
+            "LockToken": "l2",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.get_all_lists(_zs(), list_names=["bad-paths"])
+        assert "bad-paths" in result
+        assert "blocklist" not in result
+
+    def test_update_list_description_regex(self, mock_waf_client):
+        """update_list_description works for regex pattern sets."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.return_value = {
+            "RegexPatternSets": [{"Id": "rps-1", "Name": "bad-paths"}]
+        }
+        mock_waf_client.get_regex_pattern_set.return_value = {
+            "RegexPatternSet": {"RegularExpressionList": [{"RegexString": "^/admin"}]},
+            "LockToken": "lock-1",
+        }
+        provider = AwsWafProvider(client=mock_waf_client)
+        provider.update_list_description(_zs(), "rps-1", "Updated desc")
+        mock_waf_client.update_regex_pattern_set.assert_called_once()
+        call_kwargs = mock_waf_client.update_regex_pattern_set.call_args[1]
+        assert call_kwargs["Description"] == "Updated desc"
+        assert call_kwargs["RegularExpressionList"] == [{"RegexString": "^/admin"}]
+
+    def test_paginate_regex_pattern_sets(self, mock_waf_client):
+        """Regex pattern set pagination via NextMarker."""
+        mock_waf_client.list_ip_sets.return_value = {"IPSets": []}
+        mock_waf_client.list_regex_pattern_sets.side_effect = [
+            {
+                "RegexPatternSets": [{"Id": "rps-1", "Name": "set-1", "Description": "first"}],
+                "NextMarker": "page2",
+            },
+            {
+                "RegexPatternSets": [{"Id": "rps-2", "Name": "set-2", "Description": "second"}],
+            },
+        ]
+        provider = AwsWafProvider(client=mock_waf_client)
+        result = provider.list_lists(_zs())
+        regex_results = [r for r in result if r["kind"] == "regex"]
+        assert len(regex_results) == 2
+        assert mock_waf_client.list_regex_pattern_sets.call_count == 2

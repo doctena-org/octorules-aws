@@ -101,6 +101,26 @@ WA156 = RuleMeta(
     "WA156", "statement", "ManagedRuleGroupStatement version not pinned", Severity.WARNING
 )
 
+# WA157-WA161: Managed rule group config validation
+WA157 = RuleMeta(
+    "WA157", "statement", "ExcludedRules must be a list of dicts with Name", Severity.ERROR
+)
+WA159 = RuleMeta(
+    "WA159",
+    "statement",
+    "RuleActionOverrides entry missing Name or ActionToUse",
+    Severity.ERROR,
+)
+WA160 = RuleMeta(
+    "WA160", "statement", "RuleActionOverrides ActionToUse has invalid action", Severity.ERROR
+)
+WA161 = RuleMeta(
+    "WA161",
+    "statement",
+    "Deprecated ExcludedRules — use RuleActionOverrides instead",
+    Severity.INFO,
+)
+
 # WA330: Statement nesting depth
 WA330 = RuleMeta("WA330", "statement", "Statement nesting exceeds maximum depth", Severity.ERROR)
 
@@ -139,6 +159,14 @@ WA326 = RuleMeta(
     Severity.INFO,
 )
 
+# WA327: Cross-file regex pattern set ARN reference validation
+WA327 = RuleMeta(
+    "WA327",
+    "cross-rule",
+    "RegexPatternSetReferenceStatement references Regex Pattern Set not in lists section",
+    Severity.INFO,
+)
+
 # WA340: WCU capacity estimation
 WA340 = RuleMeta(
     "WA340", "cross-rule", "Estimated total WCU exceeds Web ACL limit", Severity.WARNING
@@ -161,6 +189,12 @@ WA343 = RuleMeta(
 
 # WA600-WA602: Best practice
 WA600 = RuleMeta("WA600", "best_practice", "Rule is disabled (enabled: false)", Severity.INFO)
+WA601 = RuleMeta(
+    "WA601",
+    "best_practice",
+    "Total rule count may exceed default Web ACL limit of 100",
+    Severity.WARNING,
+)
 WA602 = RuleMeta(
     "WA602",
     "best_practice",

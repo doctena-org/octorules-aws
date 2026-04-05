@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **69 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **74 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -60,6 +60,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA022](#wa022--duplicate-ref-within-phase) | Duplicate ref within phase | ERROR |
 | [WA100](#wa100--priority-must-be-a-non-negative-integer) | Priority must be a non-negative integer | ERROR |
 | [WA101](#wa101--duplicate-priority-across-rules) | Duplicate Priority across rules | ERROR |
+| [WA157](#wa157--excludedrules-must-be-a-list-of-dicts-with-name) | ExcludedRules must be a list of dicts with Name | ERROR |
+| [WA159](#wa159--ruleactionoverrides-entry-missing-name-or-actiontouse) | RuleActionOverrides entry missing Name or ActionToUse | ERROR |
+| [WA160](#wa160--ruleactionoverrides-actiontouse-has-invalid-action) | RuleActionOverrides ActionToUse has invalid action | ERROR |
+| [WA161](#wa161--deprecated-excludedrules--use-ruleactionoverrides-instead) | Deprecated ExcludedRules — use RuleActionOverrides instead | INFO |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
 | [WA201](#wa201--invalid-overrideaction-type) | Invalid OverrideAction type | ERROR |
 | [WA300](#wa300--statement-must-have-exactly-one-type) | Statement must have exactly one type | ERROR |
@@ -108,6 +112,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA501](#wa501--duplicate-metricname-across-phases) | Duplicate MetricName across phases | ERROR |
 | [WA520](#wa520--duplicate-statement-across-rules-in-phase) | Duplicate statement across rules in phase | WARNING |
 | [WA326](#wa326--ipsetreferencestatement-references-ip-set-not-in-lists-section) | IPSetReferenceStatement references IP Set not in lists section | INFO |
+| [WA327](#wa327--regexpatternsetreferencestatement-references-regex-pattern-set-not-in-lists-section) | RegexPatternSetReferenceStatement references Regex Pattern Set not in lists section | INFO |
 | [WA340](#wa340--estimated-total-wcu-exceeds-web-acl-limit) | Estimated total WCU exceeds Web ACL limit | WARNING |
 | [WA341](#wa341--geomatchstatement-likely-always-true) | GeoMatchStatement likely always true | WARNING |
 | [WA342](#wa342--contradictory-and-conditions-non-overlapping-geomatch-sets) | Contradictory AND conditions (non-overlapping GeoMatch sets) | WARNING |
@@ -121,13 +126,13 @@ Suppressed findings are excluded from the report but counted in the summary line
 
 | WA Range | Category | Rules |
 |----------|----------|-------|
-| WA001-WA005, WA010, WA020-WA022 | Structure & YAML | 9 |
-| WA100-WA101 | Priority | 2 |
+| WA001-WA005, WA010, WA020-WA022, WA154 | Structure & YAML | 10 |
+| WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA300-WA343 | Statement validation | 33 |
+| WA156-WA161, WA300-WA343 | Statement validation | 39 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA326, WA340, WA500-WA501, WA520 | Cross-rule | 5 |
+| WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |
 | WA600-WA602 | Best practice | 2 |
 
 ---
@@ -569,18 +574,20 @@ An ARN string was found that starts with `arn:` but does not match the expected 
 
 **Severity:** ERROR
 
-The `Limit` field in a `RateBasedStatement` must be an integer >= 10. AWS WAF requires the rate limit to be at least 10 requests per 5-minute window.
+The `Limit` field in a `RateBasedStatement` must be an integer >= 100. AWS WAF requires the rate limit to be at least 100 requests per 5-minute window.
 
 **Triggers on:**
 
 ```yaml
     Statement:
       RateBasedStatement:
-        Limit: 5               # below minimum of 10
+        Limit: 50              # below minimum of 100
         AggregateKeyType: IP
 ```
 
-**Fix:** Set `Limit` to at least 10:
+Also fires when `Limit` is entirely missing from `RateBasedStatement`.
+
+**Fix:** Set `Limit` to at least 100:
 
 ```yaml
         Limit: 100
@@ -1254,6 +1261,133 @@ A `ManagedRuleGroupStatement` does not have a `Version` field. Without version p
         Version: "Version_1.0"
 ```
 
+### WA157 -- ExcludedRules must be a list of dicts with Name
+
+**Severity:** ERROR
+
+The `ExcludedRules` field in a `ManagedRuleGroupStatement` must be a list of objects, each containing a `Name` string field identifying the managed rule to exclude.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      ManagedRuleGroupStatement:
+        VendorName: AWS
+        Name: AWSManagedRulesCommonRuleSet
+        ExcludedRules: "SizeRestrictions_BODY"    # must be a list
+```
+
+Or:
+
+```yaml
+        ExcludedRules:
+          - "SizeRestrictions_BODY"    # must be a dict with Name
+```
+
+Or:
+
+```yaml
+        ExcludedRules:
+          - Priority: 1    # missing Name
+```
+
+**Fix:** Use the correct structure:
+
+```yaml
+        ExcludedRules:
+          - Name: SizeRestrictions_BODY
+          - Name: NoUserAgent_HEADER
+```
+
+### WA159 -- RuleActionOverrides entry missing Name or ActionToUse
+
+**Severity:** ERROR
+
+Each entry in a `ManagedRuleGroupStatement.RuleActionOverrides` list must be a dict containing both a `Name` (string) and an `ActionToUse` (dict) field. This rule fires when either field is missing, has the wrong type, or the entry itself is not a dict.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      ManagedRuleGroupStatement:
+        VendorName: AWS
+        Name: AWSManagedRulesCommonRuleSet
+        RuleActionOverrides:
+          - Name: SizeRestrictions_BODY
+            # missing ActionToUse
+```
+
+**Fix:** Add both required fields:
+
+```yaml
+        RuleActionOverrides:
+          - Name: SizeRestrictions_BODY
+            ActionToUse:
+              Count: {}
+```
+
+### WA160 -- RuleActionOverrides ActionToUse has invalid action
+
+**Severity:** ERROR
+
+The `ActionToUse` dict in a `RuleActionOverrides` entry must contain exactly one key from the valid set of AWS WAF actions: `Allow`, `Block`, `Captcha`, `Challenge`, `Count`.
+
+**Triggers on:**
+
+```yaml
+        RuleActionOverrides:
+          - Name: SizeRestrictions_BODY
+            ActionToUse:
+              Deny: {}    # not a valid action
+```
+
+Or:
+
+```yaml
+            ActionToUse:
+              Block: {}
+              Count: {}    # two actions
+```
+
+**Fix:** Use exactly one valid action:
+
+```yaml
+            ActionToUse:
+              Count: {}
+```
+
+### WA161 -- Deprecated ExcludedRules -- use RuleActionOverrides instead
+
+**Severity:** INFO
+
+A `ManagedRuleGroupStatement` uses the deprecated `ExcludedRules` field without also providing `RuleActionOverrides`. AWS recommends migrating to `RuleActionOverrides`, which provides finer-grained control by specifying an explicit action per rule instead of blanket exclusion.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      ManagedRuleGroupStatement:
+        VendorName: AWS
+        Name: AWSManagedRulesCommonRuleSet
+        ExcludedRules:
+          - Name: SizeRestrictions_BODY
+```
+
+**Fix:** Migrate to `RuleActionOverrides` with an explicit action:
+
+```yaml
+    Statement:
+      ManagedRuleGroupStatement:
+        VendorName: AWS
+        Name: AWSManagedRulesCommonRuleSet
+        RuleActionOverrides:
+          - Name: SizeRestrictions_BODY
+            ActionToUse:
+              Count: {}
+```
+
+> **Note:** This rule does not fire when both `ExcludedRules` and `RuleActionOverrides` are present, since the migration may be in progress.
+
 ---
 
 ## Action Parameters
@@ -1557,6 +1691,56 @@ lists:
 
 > **Note:** This check only fires when a `lists` section exists with at least one entry. If you don't use octorules-managed IP Sets, this rule won't fire.
 
+### WA327 -- RegexPatternSetReferenceStatement references Regex Pattern Set not in lists section
+
+**Severity:** INFO
+
+A `RegexPatternSetReferenceStatement` references a Regex Pattern Set (by ARN) whose name does not appear in the `lists` section of the rules file with `kind: regex`. If the Regex Pattern Set is managed by octorules, it should be declared in the `lists` section for full lifecycle management (create, update, delete).
+
+The name is extracted from the ARN: `arn:aws:wafv2:REGION:ACCOUNT:SCOPE/regexpatternset/NAME/ID`.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: allowed-patterns
+    kind: regex
+    items: [...]
+
+aws_waf_custom_rules:
+  - ref: block-bad-ua
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      RegexPatternSetReferenceStatement:
+        ARN: arn:aws:wafv2:us-east-1:123456789012:regional/regexpatternset/bad-ua-patterns/abc123
+        # "bad-ua-patterns" is not in the lists section
+        FieldToMatch:
+          SingleHeader:
+            Name: user-agent
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+    VisibilityConfig:
+      SampledRequestsEnabled: true
+      CloudWatchMetricsEnabled: true
+      MetricName: BlockBadUA
+```
+
+**Fix:** Add the Regex Pattern Set to the `lists` section:
+
+```yaml
+lists:
+  - name: bad-ua-patterns
+    kind: regex
+    items:
+      - pattern: "BadBot.*"
+      - pattern: "EvilCrawler/\\d+"
+```
+
+> **Note:** This check only fires when a `lists` section exists with at least one `kind: regex` entry. If you don't use octorules-managed Regex Pattern Sets, this rule won't fire.
+
 ### WA158 -- IP set exceeds 10,000 address limit
 
 **Severity:** WARNING
@@ -1720,7 +1904,7 @@ aws_waf_custom_rules:
 
 **Severity:** INFO
 
-A rule with `Action: Count` on a `ManagedRuleGroupStatement` without a `ScopeDownStatement` wrapper logs all traffic through the managed rule group without blocking anything. This is usually unintentional — it generates noise in CloudWatch WAF logs and consumes WCU without providing protection.
+A rule with `Action: Count` or `OverrideAction: Count` on a `ManagedRuleGroupStatement` without a `ScopeDownStatement` wrapper logs all traffic through the managed rule group without blocking anything. At the Web ACL level, managed rule groups use `OverrideAction` (not `Action`) to override the group's default behavior. This is usually unintentional — it generates noise in CloudWatch WAF logs and consumes WCU without providing protection.
 
 **Fix:** Either change the action to `Block` for protection, or add a `ScopeDownStatement` to limit which requests are counted.
 

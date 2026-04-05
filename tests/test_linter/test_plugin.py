@@ -641,14 +641,194 @@ class TestIpSetReferences:
         assert len(wa326) == 0
 
 
+class TestRegexSetReferences:
+    """WA327: RegexPatternSetReferenceStatement references set not in lists."""
+
+    _REGEX_IN_LIST = (
+        "arn:aws:wafv2:us-east-1:123456789012:regional/regexpatternset/bad-paths/rps-id-1"
+    )
+    _REGEX_EXTERNAL = (
+        "arn:aws:wafv2:us-east-1:123456789012:regional/regexpatternset/external-patterns/rps-id-2"
+    )
+
+    @staticmethod
+    def _make_rule(ref, priority, metric, stmt):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {"Block": {}},
+            "Statement": stmt,
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": metric,
+            },
+        }
+
+    def test_wa327_fires_when_regex_set_not_in_lists(self):
+        """WA327 fires when regex set ARN references a set not in lists."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-paths", "kind": "regex", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX_EXTERNAL,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 1
+        assert "external-patterns" in wa327[0].message
+
+    def test_wa327_no_fire_when_in_lists(self):
+        """WA327 does not fire when regex set is in the lists section."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-paths", "kind": "regex", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX_IN_LIST,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 0
+
+    def test_wa327_no_fire_without_regex_lists(self):
+        """Without regex lists in lists section, WA327 does not fire."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "blocklist", "kind": "ip", "items": []},
+            ],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX_EXTERNAL,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 0
+
+    def test_wa327_no_fire_no_lists_section(self):
+        """Without a lists section at all, WA327 does not fire."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX_EXTERNAL,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 0
+
+    def test_wa327_nested_in_and(self):
+        """Regex set inside AndStatement is still checked."""
+        ctx = LintContext()
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "RegexPatternSetReferenceStatement": {
+                            "ARN": self._REGEX_EXTERNAL,
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                        }
+                    },
+                    {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+                ]
+            }
+        }
+        rules_data = {
+            "lists": [{"name": "bad-paths", "kind": "regex", "items": []}],
+            "aws_waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 1
+        assert "external-patterns" in wa327[0].message
+
+    def test_wa327_ipset_arn_not_matched(self):
+        """IP set ARNs are not checked by WA327."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "bad-paths", "kind": "regex", "items": []}],
+            "aws_waf_custom_rules": [
+                self._make_rule(
+                    "r1",
+                    1,
+                    "m1",
+                    {
+                        "IPSetReferenceStatement": {
+                            "ARN": "arn:aws:wafv2:us-east-1:123:regional/ipset/x/id"
+                        }
+                    },
+                )
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
+        assert len(wa327) == 0
+
+
 class TestListItemCounts:
     """WA158: IP set exceeds 10,000 address limit."""
+
+    @staticmethod
+    def _unique_ips(n: int) -> list[str]:
+        """Generate *n* unique /32 addresses for testing."""
+        return [f"10.{(i >> 16) & 0xFF}.{(i >> 8) & 0xFF}.{i & 0xFF}/32" for i in range(n)]
 
     def test_wa158_under_limit_no_warn(self):
         ctx = LintContext()
         rules_data = {
             "lists": [
-                {"name": "small-set", "kind": "ip", "items": ["10.0.0.1"] * 100},
+                {"name": "small-set", "kind": "ip", "items": self._unique_ips(100)},
             ],
         }
         aws_lint(rules_data, ctx)
@@ -659,7 +839,7 @@ class TestListItemCounts:
         ctx = LintContext()
         rules_data = {
             "lists": [
-                {"name": "big-set", "kind": "ip", "items": ["10.0.0.1"] * 10_000},
+                {"name": "big-set", "kind": "ip", "items": self._unique_ips(10_000)},
             ],
         }
         aws_lint(rules_data, ctx)
@@ -670,13 +850,26 @@ class TestListItemCounts:
         ctx = LintContext()
         rules_data = {
             "lists": [
-                {"name": "huge-set", "kind": "ip", "items": ["10.0.0.1"] * 10_001},
+                {"name": "huge-set", "kind": "ip", "items": self._unique_ips(10_001)},
             ],
         }
         aws_lint(rules_data, ctx)
         wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
         assert len(wa158) == 1
         assert "huge-set" in wa158[0].message
+
+    def test_wa158_duplicates_not_counted(self):
+        """Duplicated items should not inflate the count."""
+        ctx = LintContext()
+        # 10_001 raw items but only 1 unique -- should NOT trigger.
+        rules_data = {
+            "lists": [
+                {"name": "dup-set", "kind": "ip", "items": ["10.0.0.1"] * 10_001},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 0
 
     def test_wa158_no_lists_section_no_warn(self):
         ctx = LintContext()
@@ -691,11 +884,116 @@ class TestListItemCounts:
         ctx = LintContext()
         rules_data = {
             "lists": [
-                {"name": "ok-set", "kind": "ip", "items": ["10.0.0.1"] * 100},
-                {"name": "bad-set", "kind": "ip", "items": ["10.0.0.1"] * 10_001},
+                {"name": "ok-set", "kind": "ip", "items": self._unique_ips(100)},
+                {"name": "bad-set", "kind": "ip", "items": self._unique_ips(10_001)},
             ],
         }
         aws_lint(rules_data, ctx)
         wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
         assert len(wa158) == 1
         assert "bad-set" in wa158[0].message
+
+
+class TestRuleCount:
+    """WA601: Total rule count may exceed default Web ACL limit of 100."""
+
+    @staticmethod
+    def _make_rule(ref, priority, metric):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {"Block": {}},
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": metric,
+            },
+            "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+        }
+
+    def test_wa601_under_limit_no_warn(self):
+        """10 rules should not trigger WA601."""
+        ctx = LintContext()
+        rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(10)]
+        rules_data = {"aws_waf_custom_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0
+
+    def test_wa601_exactly_100_no_warn(self):
+        """Exactly 100 rules should NOT trigger WA601."""
+        ctx = LintContext()
+        rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(100)]
+        rules_data = {"aws_waf_custom_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0
+
+    def test_wa601_exceeds_limit(self):
+        """101 rules should trigger WA601."""
+        ctx = LintContext()
+        rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(101)]
+        rules_data = {"aws_waf_custom_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 1
+        assert "101" in wa601[0].message
+        assert "100" in wa601[0].message
+
+    def test_wa601_cross_phase_sum(self):
+        """Rules are summed across all AWS phases."""
+        ctx = LintContext()
+        rules_a = [self._make_rule(f"a{i}", i, f"ma{i}") for i in range(60)]
+        rules_b = [self._make_rule(f"b{i}", i, f"mb{i}") for i in range(50)]
+        rules_data = {
+            "aws_waf_custom_rules": rules_a,
+            "aws_waf_rate_rules": rules_b,
+        }
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 1
+        assert "110" in wa601[0].message
+
+    def test_wa601_respects_phase_filter(self):
+        """WA601 should respect ctx.phase_filter."""
+        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        # Put 101 rules in rate_rules (filtered out)
+        rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(101)]
+        rules_data = {"aws_waf_rate_rules": rules}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0
+
+    def test_wa601_skips_non_aws_phases(self):
+        """Non-AWS phases should not count toward the limit."""
+        ctx = LintContext()
+        rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(101)]
+        rules_data = {"http_request_dynamic_redirect": rules}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0
+
+    def test_wa601_non_dict_rules_not_counted(self):
+        """Non-dict entries in the rules list should not inflate the count.
+
+        We test _check_rule_count directly because validate_rules (per-phase)
+        does not tolerate non-dict entries.
+        """
+        from octorules_aws.linter._plugin import _check_rule_count
+
+        ctx = LintContext()
+        rules: list = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(99)]
+        # Add non-dict entries that should be ignored by the counter
+        rules.extend(["string-entry", 42, None])
+        rules_data = {"aws_waf_custom_rules": rules}
+        _check_rule_count(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0
+
+    def test_wa601_non_list_phase_skipped(self):
+        """Phase with non-list value should be silently skipped."""
+        ctx = LintContext()
+        rules_data = {"aws_waf_custom_rules": "not-a-list"}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        assert len(wa601) == 0

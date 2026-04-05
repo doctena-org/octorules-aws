@@ -1,6 +1,7 @@
 """AWS WAF lint plugin -- orchestrates all AWS-specific linter checks."""
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
@@ -8,7 +9,9 @@ from octorules.phases import PHASE_BY_NAME
 
 from octorules_aws import AWS_PHASE_NAMES
 from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
+from octorules_aws._statement_util import REGEX_SET_ARN_RE as _REGEX_SET_ARN_RE
 from octorules_aws._statement_util import collect_ipset_arns as _collect_ipset_arns_from_statement
+from octorules_aws._statement_util import collect_regex_set_arns as _collect_regex_set_arns
 from octorules_aws.linter._rules import AWS_RULE_METAS
 from octorules_aws.validate import _estimate_rule_wcu, validate_rules
 
@@ -19,7 +22,7 @@ AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
 
 # Default Web ACL WCU limit.  Override via ``set_wcu_limit()`` for accounts
 # with custom capacity (up to 5000 via AWS support).
-_WCU_LIMIT = 1500
+_wcu_limit_var: ContextVar[int] = ContextVar("wcu_limit", default=1500)
 
 
 def set_wcu_limit(limit: int) -> None:
@@ -27,9 +30,11 @@ def set_wcu_limit(limit: int) -> None:
 
     The default is 1500 (AWS WAF standard).  Call this from provider init
     if the user has configured a custom ``wcu_limit`` in their provider config.
+
+    The value is stored in a :class:`contextvars.ContextVar` so that
+    concurrent threads or async tasks each see their own limit.
     """
-    global _WCU_LIMIT
-    _WCU_LIMIT = limit
+    _wcu_limit_var.set(limit)
 
 
 def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -146,14 +151,15 @@ def _check_wcu_capacity(rules_data: dict[str, Any], ctx: LintContext) -> None:
             phase_totals.append((phase_name, phase_wcu))
             total_wcu += phase_wcu
 
-    if total_wcu > _WCU_LIMIT:
+    wcu_limit = _wcu_limit_var.get()
+    if total_wcu > wcu_limit:
         # Use the first phase as the result phase
         result_phase = phase_totals[0][0] if phase_totals else ""
         ctx.add(
             LintResult(
                 rule_id="WA340",
                 severity=Severity.WARNING,
-                message=(f"Estimated total WCU ({total_wcu}) exceeds Web ACL limit ({_WCU_LIMIT})"),
+                message=(f"Estimated total WCU ({total_wcu}) exceeds Web ACL limit ({wcu_limit})"),
                 phase=result_phase,
             )
         )
@@ -226,6 +232,111 @@ def _check_ipset_references(rules_data: dict[str, Any], ctx: LintContext) -> Non
                     )
 
 
+def _check_regex_set_references(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA327: Check if RegexPatternSet ARNs reference sets not in the lists section.
+
+    Extracts the regex pattern set name from the ARN and checks if it appears
+    in the lists section with kind=regex. If not, emit an INFO suggestion.
+    """
+    lists_section = rules_data.get("lists")
+    if not isinstance(lists_section, list):
+        return
+
+    regex_list_names: set[str] = set()
+    for lst in lists_section:
+        if isinstance(lst, dict):
+            name = lst.get("name")
+            kind = lst.get("kind")
+            if isinstance(name, str) and kind == "regex":
+                regex_list_names.add(name)
+
+    if not regex_list_names:
+        # No regex lists defined -- skip (same logic as WA326 for IP sets)
+        return
+
+    for phase_name, rules in rules_data.items():
+        if phase_name not in _AWS_PHASE_NAMES:
+            continue
+        if phase_name not in PHASE_BY_NAME:
+            continue
+        if ctx.phase_filter and phase_name not in ctx.phase_filter:
+            continue
+        if not isinstance(rules, list):
+            continue
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            stmt = rule.get("Statement")
+            if not isinstance(stmt, dict):
+                continue
+
+            ref = str(rule.get("ref", ""))
+            arns = _collect_regex_set_arns(stmt)
+
+            for arn in arns:
+                match = _REGEX_SET_ARN_RE.match(arn)
+                if not match:
+                    continue  # Not a valid regex set ARN -- WA302 handles format
+                set_name = match.group(1)
+                if set_name not in regex_list_names:
+                    ctx.add(
+                        LintResult(
+                            rule_id="WA327",
+                            severity=Severity.INFO,
+                            message=(
+                                f"RegexPatternSetReferenceStatement references"
+                                f" '{set_name}' which is not in the lists section"
+                                " (kind: regex). If this is a managed Regex Pattern"
+                                " Set, add it to lists for full lifecycle management."
+                            ),
+                            phase=phase_name,
+                            ref=ref,
+                            field="Statement.RegexPatternSetReferenceStatement.ARN",
+                        )
+                    )
+
+
+_DEFAULT_RULE_LIMIT = 100
+
+
+def _check_rule_count(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA601: Warn if the total rule count across AWS phases exceeds 100.
+
+    AWS Web ACLs have a default limit of 100 rules (extendable to 500 with
+    AWS support).  This counts all rules across all AWS phases and warns
+    when the total may exceed the default limit.
+    """
+    total = 0
+    first_phase = ""
+    for phase_name, rules in rules_data.items():
+        if phase_name not in _AWS_PHASE_NAMES:
+            continue
+        if phase_name not in PHASE_BY_NAME:
+            continue
+        if ctx.phase_filter and phase_name not in ctx.phase_filter:
+            continue
+        if not isinstance(rules, list):
+            continue
+        count = sum(1 for r in rules if isinstance(r, dict))
+        if count > 0 and not first_phase:
+            first_phase = phase_name
+        total += count
+
+    if total > _DEFAULT_RULE_LIMIT:
+        ctx.add(
+            LintResult(
+                rule_id="WA601",
+                severity=Severity.WARNING,
+                message=(
+                    f"Total rule count ({total}) may exceed"
+                    f" the default Web ACL limit of {_DEFAULT_RULE_LIMIT}"
+                ),
+                phase=first_phase,
+            )
+        )
+
+
 _MAX_IPSET_ITEMS = 10_000
 
 
@@ -241,14 +352,19 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
         items = lst.get("items")
         if not isinstance(items, list):
             continue
-        if len(items) > _MAX_IPSET_ITEMS:
+        # Deduplicate: AWS WAF counts unique addresses.
+        unique_count = len(set(str(i) for i in items))
+        if unique_count > _MAX_IPSET_ITEMS:
             name = lst.get("name", "<unknown>")
+            dup_note = ""
+            if unique_count < len(items):
+                dup_note = f" ({len(items)} total, {len(items) - unique_count} duplicates)"
             ctx.add(
                 LintResult(
                     rule_id="WA158",
                     severity=Severity.WARNING,
                     message=(
-                        f"IP set '{name}' has {len(items)} items,"
+                        f"IP set '{name}' has {unique_count} unique items{dup_note},"
                         f" exceeding the {_MAX_IPSET_ITEMS} address limit"
                     ),
                     phase="",
@@ -276,5 +392,7 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     _check_cross_phase_metrics(rules_data, ctx)
     _check_duplicate_statements(rules_data, ctx)
     _check_wcu_capacity(rules_data, ctx)
+    _check_rule_count(rules_data, ctx)
     _check_ipset_references(rules_data, ctx)
+    _check_regex_set_references(rules_data, ctx)
     _check_list_item_counts(rules_data, ctx)

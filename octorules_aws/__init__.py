@@ -12,10 +12,16 @@ _AWS_PHASES = AWS_PHASES
 register_phases(_AWS_PHASES)
 register_api_fields("rule", {"OverrideAction"})
 register_non_phase_key("custom_rulesets")
+register_non_phase_key("aws_waf_settings")
 
 from octorules_aws.linter import register_aws_linter  # noqa: E402
 
 register_aws_linter()
+
+# Register ACL settings extension.
+from octorules_aws._acl_settings import register_acl_settings  # noqa: E402
+
+register_acl_settings()
 
 # Register audit IP extractor.
 from octorules_aws.audit import register_aws_audit  # noqa: E402

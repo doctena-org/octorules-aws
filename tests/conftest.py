@@ -8,7 +8,11 @@ import pytest
 @pytest.fixture
 def mock_waf_client():
     """Create a mock boto3 wafv2 client."""
-    return MagicMock()
+    client = MagicMock()
+    # Default to empty regex pattern set list so IP-Set-only tests
+    # don't fail when list_lists/get_all_lists calls both APIs.
+    client.list_regex_pattern_sets.return_value = {"RegexPatternSets": []}
+    return client
 
 
 @pytest.fixture

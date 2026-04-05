@@ -32,6 +32,20 @@ _LOCK_RETRIES = 3
 _LOCK_BACKOFF = (0.5, 1.0, 2.0)
 _LOCK_JITTER = 0.5
 
+# Fields returned by get_web_acl that update_web_acl does NOT accept.
+# These are read-only / computed and must be stripped before calling update.
+_WEB_ACL_READ_ONLY_FIELDS = frozenset(
+    {
+        "ARN",
+        "Capacity",
+        "LabelNamespace",
+        "ManagedByFirewallManager",
+        "PostProcessFirewallManagerRuleGroups",
+        "PreProcessFirewallManagerRuleGroups",
+        "RetrofittedByFirewallManager",
+    }
+)
+
 # Default VisibilityConfig for newly created Rule Groups.
 _DEFAULT_VISIBILITY_CONFIG = {
     "SampledRequestsEnabled": True,
@@ -230,7 +244,7 @@ class AwsWafProvider:
         seen_markers: set[str] = set()
         for _ in range(self._MAX_PAGES):
             response = api_method(**kwargs)
-            results.extend(response.get(response_key, []))
+            results.extend(response.get(response_key) or [])
             marker = response.get("NextMarker")
             if not marker:
                 break
@@ -318,6 +332,44 @@ class AwsWafProvider:
         all_acls = self._paginate_list(self._client.list_web_acls, "WebACLs")
         return [acl["Name"] for acl in all_acls]
 
+    # -- ACL settings --
+
+    @_wrap_provider_errors
+    def get_acl_settings(self, scope: Scope) -> dict:
+        """Fetch Web ACL settings (everything except Rules).
+
+        Returns a dict with only the managed settings fields
+        (DefaultAction, VisibilityConfig, ChallengeConfig, etc.).
+        """
+        from octorules_aws._acl_settings import normalize_acl_settings
+
+        acl, _ = self._get_web_acl(scope)
+        return normalize_acl_settings(acl)
+
+    @_wrap_provider_errors
+    def update_acl_settings(self, scope: Scope, settings: dict) -> None:
+        """Update Web ACL settings (read-modify-write with lock token).
+
+        Merges *settings* into the current ACL and writes back.
+        Only keys present in *settings* are updated; other fields
+        (including Rules) are preserved.
+        """
+        from octorules_aws._acl_settings import denormalize_acl_settings
+
+        updates = denormalize_acl_settings(settings)
+        if not updates:
+            return
+
+        def _op() -> None:
+            acl, lock_token = self._get_web_acl(scope)
+            kwargs = {k: v for k, v in acl.items() if k not in _WEB_ACL_READ_ONLY_FIELDS}
+            kwargs.update(updates)
+            kwargs["Scope"] = self._waf_scope
+            kwargs["LockToken"] = lock_token
+            self._client.update_web_acl(**kwargs)
+
+        self._with_lock_retry(_op, f"WebACL {scope.zone_id} settings")
+
     # -- Phase rules --
 
     @_wrap_provider_errors
@@ -341,21 +393,25 @@ class AwsWafProvider:
         re-fetching and re-merging.
         """
         new_rules = [_denormalize_rule(r) for r in rules]
+        # Fail fast if resolve_zone_id was never called for this zone.
         with self._lock:
-            meta = self._web_acl_meta[scope.zone_id]
+            if scope.zone_id not in self._web_acl_meta:
+                raise ConfigError(
+                    f"Web ACL {scope.zone_id!r} not resolved (call resolve_zone_id first)"
+                )
 
         def _op() -> int:
             acl, lock_token = self._get_web_acl(scope)
             other_rules = [r for r in acl.get("Rules", []) if _classify_phase(r) != provider_id]
-            self._client.update_web_acl(
-                Name=meta["Name"],
-                Scope=self._waf_scope,
-                Id=scope.zone_id,
-                DefaultAction=acl["DefaultAction"],
-                Rules=other_rules + new_rules,
-                VisibilityConfig=acl["VisibilityConfig"],
-                LockToken=lock_token,
-            )
+            # Start from the full ACL dict so we preserve all mutable settings
+            # (TokenDomains, ChallengeConfig, CaptchaConfig, AssociationConfig,
+            # CustomResponseBodies, etc.).  Strip read-only fields that
+            # update_web_acl rejects, then override Rules and LockToken.
+            kwargs = {k: v for k, v in acl.items() if k not in _WEB_ACL_READ_ONLY_FIELDS}
+            kwargs["Scope"] = self._waf_scope
+            kwargs["Rules"] = other_rules + new_rules
+            kwargs["LockToken"] = lock_token
+            self._client.update_web_acl(**kwargs)
             return len(new_rules)
 
         return self._with_lock_retry(_op, f"WebACL {scope.zone_id}")
@@ -502,15 +558,19 @@ class AwsWafProvider:
         else:
             # Build index from pre-fetched list so _find_rule_group hits cache
             rg_by_id = {rg.get("Id", ""): rg for rg in rg_list}
-            meta_list = [
-                {
-                    "id": rid,
-                    "name": rg_by_id.get(rid, {}).get("Name", ""),
-                    "phase": "",
-                    "description": rg_by_id.get(rid, {}).get("Description", ""),
-                }
-                for rid in ruleset_ids
-            ]
+            meta_list = []
+            for rid in ruleset_ids:
+                if rid not in rg_by_id:
+                    log.warning("Rule Group %r not found, skipping", rid)
+                    continue
+                meta_list.append(
+                    {
+                        "id": rid,
+                        "name": rg_by_id[rid].get("Name", ""),
+                        "phase": "",
+                        "description": rg_by_id[rid].get("Description", ""),
+                    }
+                )
 
         if not meta_list:
             return {}
@@ -552,11 +612,10 @@ class AwsWafProvider:
             ruleset_id, self._client.list_rule_groups, "RuleGroups", "Rule Group", _cache=_cache
         )
 
-    # -- IP Sets (lists) --
+    # -- IP Sets --
 
-    @_wrap_provider_errors
-    def list_lists(self, scope: Scope) -> list[dict]:
-        """List all IP Sets."""
+    def _list_ip_sets(self, scope: Scope) -> list[dict]:
+        """List all IP Sets as list metadata dicts."""
         all_ips = self._paginate_list(self._client.list_ip_sets, "IPSets")
         return [
             {
@@ -568,8 +627,7 @@ class AwsWafProvider:
             for ip_set in all_ips
         ]
 
-    @_wrap_provider_errors
-    def create_list(self, scope: Scope, name: str, kind: str, description: str = "") -> dict:
+    def _create_ip_set(self, scope: Scope, name: str, kind: str, description: str) -> dict:
         """Create a new IP Set."""
         ip_version = "IPV6" if kind == "ipv6" else "IPV4"
         response = self._client.create_ip_set(
@@ -585,8 +643,7 @@ class AwsWafProvider:
             raise ProviderError(f"create_ip_set response missing Summary.Id (name={name!r})")
         return {"id": list_id, "name": summary.get("Name", name)}
 
-    @_wrap_provider_errors
-    def delete_list(self, scope: Scope, list_id: str) -> None:
+    def _delete_ip_set(self, scope: Scope, list_id: str) -> None:
         """Delete an IP Set. Retries on stale LockToken."""
         meta = self._find_ip_set(list_id)
 
@@ -601,44 +658,17 @@ class AwsWafProvider:
 
         self._with_lock_retry(_op, f"IPSet {list_id} delete")
 
-    @_wrap_provider_errors
-    def update_list_description(self, scope: Scope, list_id: str, description: str) -> None:
-        """Update an IP Set's description. Retries on stale LockToken.
-
-        AWS WAF v2 does not support updating only the description — a full
-        ``update_ip_set`` call is required, preserving existing addresses.
-        """
-        meta = self._find_ip_set(list_id)
-
-        def _op() -> None:
-            response = self._client.get_ip_set(Name=meta["Name"], Scope=self._waf_scope, Id=list_id)
-            self._client.update_ip_set(
-                Name=meta["Name"],
-                Scope=self._waf_scope,
-                Id=list_id,
-                Addresses=response["IPSet"].get("Addresses", []),
-                Description=description,
-                LockToken=response["LockToken"],
-            )
-
-        self._with_lock_retry(_op, f"IPSet {list_id} description")
-
-    @_wrap_provider_errors
-    def get_list_items(
-        self, scope: Scope, list_id: str, *, _ip_cache: list[dict] | None = None
+    def _get_ip_set_items(
+        self, scope: Scope, list_id: str, *, _cache: list[dict] | None = None
     ) -> list[dict]:
         """Fetch all addresses from an IP Set."""
-        meta = self._find_ip_set(list_id, _cache=_ip_cache)
+        meta = self._find_ip_set(list_id, _cache=_cache)
         response = self._client.get_ip_set(Name=meta["Name"], Scope=self._waf_scope, Id=list_id)
         addresses = response.get("IPSet", {}).get("Addresses", [])
         return [{"ip": addr} for addr in addresses]
 
-    @_wrap_provider_errors
-    def put_list_items(self, scope: Scope, list_id: str, items: list[dict]) -> str:
-        """Replace all addresses in an IP Set. Returns a synthetic operation ID.
-
-        Retries on ``WAFOptimisticLockException`` (stale LockToken).
-        """
+    def _put_ip_set_items(self, scope: Scope, list_id: str, items: list[dict]) -> str:
+        """Replace all addresses in an IP Set. Returns a synthetic operation ID."""
         meta = self._find_ip_set(list_id)
         addresses: list[str] = []
         for i, item in enumerate(items):
@@ -662,6 +692,215 @@ class AwsWafProvider:
 
         return self._with_lock_retry(_op, f"IPSet {list_id}")
 
+    def _find_ip_set(self, list_id: str, *, _cache: list[dict] | None = None) -> dict:
+        """Look up IP Set metadata by ID. Raises ConfigError if not found."""
+        return self._find_resource(
+            list_id, self._client.list_ip_sets, "IPSets", "IP Set", _cache=_cache
+        )
+
+    # -- Regex Pattern Sets --
+
+    def _list_regex_pattern_sets(self, scope: Scope) -> list[dict]:
+        """List all Regex Pattern Sets as list metadata dicts."""
+        all_sets = self._paginate_list(self._client.list_regex_pattern_sets, "RegexPatternSets")
+        return [
+            {
+                "id": rs.get("Id", ""),
+                "name": rs.get("Name", ""),
+                "kind": "regex",
+                "description": rs.get("Description", ""),
+            }
+            for rs in all_sets
+        ]
+
+    def _create_regex_pattern_set(self, scope: Scope, name: str, description: str) -> dict:
+        """Create a new Regex Pattern Set."""
+        response = self._client.create_regex_pattern_set(
+            Name=name,
+            Scope=self._waf_scope,
+            RegularExpressionList=[],
+            Description=description,
+        )
+        summary = response.get("Summary", {})
+        set_id = summary.get("Id", "")
+        if not set_id:
+            raise ProviderError(
+                f"create_regex_pattern_set response missing Summary.Id (name={name!r})"
+            )
+        return {"id": set_id, "name": summary.get("Name", name)}
+
+    def _delete_regex_pattern_set(self, scope: Scope, set_id: str) -> None:
+        """Delete a Regex Pattern Set. Retries on stale LockToken."""
+        meta = self._find_regex_pattern_set(set_id)
+
+        def _op() -> None:
+            response = self._client.get_regex_pattern_set(
+                Name=meta["Name"], Scope=self._waf_scope, Id=set_id
+            )
+            self._client.delete_regex_pattern_set(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=set_id,
+                LockToken=response["LockToken"],
+            )
+
+        self._with_lock_retry(_op, f"RegexPatternSet {set_id} delete")
+
+    def _get_regex_pattern_set_items(
+        self, scope: Scope, set_id: str, *, _cache: list[dict] | None = None
+    ) -> list[dict]:
+        """Fetch all patterns from a Regex Pattern Set."""
+        meta = self._find_regex_pattern_set(set_id, _cache=_cache)
+        response = self._client.get_regex_pattern_set(
+            Name=meta["Name"], Scope=self._waf_scope, Id=set_id
+        )
+        patterns = response.get("RegexPatternSet", {}).get("RegularExpressionList", [])
+        return [{"regex": p.get("RegexString", "")} for p in patterns]
+
+    def _put_regex_pattern_set_items(self, scope: Scope, set_id: str, items: list[dict]) -> str:
+        """Replace all patterns in a Regex Pattern Set. Returns a synthetic operation ID."""
+        meta = self._find_regex_pattern_set(set_id)
+        patterns: list[dict] = []
+        for i, item in enumerate(items):
+            if "regex" in item:
+                patterns.append({"RegexString": item["regex"]})
+            elif "value" in item:
+                patterns.append({"RegexString": item["value"]})
+            else:
+                raise ProviderError(f"List item {i} missing 'regex' or 'value' key")
+
+        def _op() -> str:
+            response = self._client.get_regex_pattern_set(
+                Name=meta["Name"], Scope=self._waf_scope, Id=set_id
+            )
+            self._client.update_regex_pattern_set(
+                Name=meta["Name"],
+                Scope=self._waf_scope,
+                Id=set_id,
+                RegularExpressionList=patterns,
+                LockToken=response["LockToken"],
+            )
+            return f"aws-sync-{set_id}"
+
+        return self._with_lock_retry(_op, f"RegexPatternSet {set_id}")
+
+    def _find_regex_pattern_set(self, set_id: str, *, _cache: list[dict] | None = None) -> dict:
+        """Look up Regex Pattern Set metadata by ID. Raises ConfigError if not found."""
+        return self._find_resource(
+            set_id,
+            self._client.list_regex_pattern_sets,
+            "RegexPatternSets",
+            "Regex Pattern Set",
+            _cache=_cache,
+        )
+
+    # -- Lists (unified IP Set + Regex Pattern Set) --
+
+    @_wrap_provider_errors
+    def list_lists(self, scope: Scope) -> list[dict]:
+        """List all IP Sets and Regex Pattern Sets."""
+        return self._list_ip_sets(scope) + self._list_regex_pattern_sets(scope)
+
+    @_wrap_provider_errors
+    def create_list(self, scope: Scope, name: str, kind: str, description: str = "") -> dict:
+        """Create a new IP Set or Regex Pattern Set based on kind."""
+        if kind == "regex":
+            return self._create_regex_pattern_set(scope, name, description)
+        return self._create_ip_set(scope, name, kind, description)
+
+    @_wrap_provider_errors
+    def delete_list(self, scope: Scope, list_id: str) -> None:
+        """Delete an IP Set or Regex Pattern Set.
+
+        Tries IP Set first; falls back to Regex Pattern Set.
+        """
+        try:
+            self._delete_ip_set(scope, list_id)
+            return
+        except ConfigError:
+            pass
+        self._delete_regex_pattern_set(scope, list_id)
+
+    @_wrap_provider_errors
+    def update_list_description(self, scope: Scope, list_id: str, description: str) -> None:
+        """Update an IP Set's or Regex Pattern Set's description.
+
+        AWS WAF v2 does not support updating only the description -- a full
+        update call is required, preserving existing items.
+        """
+        # Try IP Set first
+        try:
+            meta = self._find_ip_set(list_id)
+        except ConfigError:
+            meta = None
+
+        if meta is not None:
+
+            def _op_ip() -> None:
+                response = self._client.get_ip_set(
+                    Name=meta["Name"], Scope=self._waf_scope, Id=list_id
+                )
+                self._client.update_ip_set(
+                    Name=meta["Name"],
+                    Scope=self._waf_scope,
+                    Id=list_id,
+                    Addresses=response["IPSet"].get("Addresses", []),
+                    Description=description,
+                    LockToken=response["LockToken"],
+                )
+
+            self._with_lock_retry(_op_ip, f"IPSet {list_id} description")
+            return
+
+        # Fall back to Regex Pattern Set
+        regex_meta = self._find_regex_pattern_set(list_id)
+
+        def _op_regex() -> None:
+            response = self._client.get_regex_pattern_set(
+                Name=regex_meta["Name"], Scope=self._waf_scope, Id=list_id
+            )
+            self._client.update_regex_pattern_set(
+                Name=regex_meta["Name"],
+                Scope=self._waf_scope,
+                Id=list_id,
+                RegularExpressionList=response["RegexPatternSet"].get("RegularExpressionList", []),
+                Description=description,
+                LockToken=response["LockToken"],
+            )
+
+        self._with_lock_retry(_op_regex, f"RegexPatternSet {list_id} description")
+
+    @_wrap_provider_errors
+    def get_list_items(
+        self, scope: Scope, list_id: str, *, _ip_cache: list[dict] | None = None
+    ) -> list[dict]:
+        """Fetch items from an IP Set or Regex Pattern Set."""
+        # Try IP Set first
+        try:
+            return self._get_ip_set_items(scope, list_id, _cache=_ip_cache)
+        except ConfigError:
+            pass
+        return self._get_regex_pattern_set_items(scope, list_id)
+
+    @_wrap_provider_errors
+    def put_list_items(self, scope: Scope, list_id: str, items: list[dict]) -> str:
+        """Replace all items in an IP Set or Regex Pattern Set.
+
+        Returns a synthetic operation ID.
+        Retries on ``WAFOptimisticLockException`` (stale LockToken).
+        """
+        # Detect kind by checking which item keys are present
+        if items and "regex" in items[0]:
+            return self._put_regex_pattern_set_items(scope, list_id, items)
+
+        # Try IP Set first
+        try:
+            self._find_ip_set(list_id)
+            return self._put_ip_set_items(scope, list_id, items)
+        except ConfigError:
+            pass
+        return self._put_regex_pattern_set_items(scope, list_id, items)
+
     @_wrap_provider_errors
     def poll_bulk_operation(
         self, scope: Scope, operation_id: str, *, timeout: float = 120.0
@@ -673,21 +912,37 @@ class AwsWafProvider:
     def get_all_lists(
         self, scope: Scope, *, list_names: list[str] | None = None
     ) -> dict[str, dict]:
-        """Fetch all IP Sets and their addresses.
+        """Fetch all IP Sets and Regex Pattern Sets with their items.
 
-        Pre-fetches the IP set list once so that individual
-        ``get_list_items`` calls don't each hit the list API.
+        Pre-fetches the IP set and regex pattern set lists once so that
+        individual get calls don't each hit the list API.
         """
+        # IP Sets
         ip_list = self._paginate_list(self._client.list_ip_sets, "IPSets")
-        all_meta = [
+        all_meta: list[dict] = [
             {
                 "id": ip_set.get("Id", ""),
                 "name": ip_set.get("Name", ""),
                 "kind": "ip",
                 "description": ip_set.get("Description", ""),
+                "_source": "ip",
             }
             for ip_set in ip_list
         ]
+
+        # Regex Pattern Sets
+        regex_list = self._paginate_list(self._client.list_regex_pattern_sets, "RegexPatternSets")
+        all_meta.extend(
+            {
+                "id": rs.get("Id", ""),
+                "name": rs.get("Name", ""),
+                "kind": "regex",
+                "description": rs.get("Description", ""),
+                "_source": "regex",
+            }
+            for rs in regex_list
+        )
+
         if list_names is not None:
             name_set = set(list_names)
             all_meta = [m for m in all_meta if m["name"] in name_set]
@@ -697,7 +952,10 @@ class AwsWafProvider:
 
         results: dict[str, dict] = {}
         for meta in all_meta:
-            items = self.get_list_items(scope, meta["id"], _ip_cache=ip_list)
+            if meta["_source"] == "ip":
+                items = self._get_ip_set_items(scope, meta["id"], _cache=ip_list)
+            else:
+                items = self._get_regex_pattern_set_items(scope, meta["id"], _cache=regex_list)
             results[meta["name"]] = {
                 "id": meta["id"],
                 "kind": meta["kind"],
@@ -705,9 +963,3 @@ class AwsWafProvider:
                 "items": items,
             }
         return results
-
-    def _find_ip_set(self, list_id: str, *, _cache: list[dict] | None = None) -> dict:
-        """Look up IP Set metadata by ID. Raises ConfigError if not found."""
-        return self._find_resource(
-            list_id, self._client.list_ip_sets, "IPSets", "IP Set", _cache=_cache
-        )
