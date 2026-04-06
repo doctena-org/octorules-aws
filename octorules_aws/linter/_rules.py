@@ -202,4 +202,13 @@ WA602 = RuleMeta(
     Severity.INFO,
 )
 
+# WA337: Invalid custom key type in CustomKeys
+WA337 = RuleMeta("WA337", "statement", "Invalid custom key type in CustomKeys", Severity.ERROR)
+
+# WA338: Invalid OversizeHandling value
+WA338 = RuleMeta("WA338", "statement", "Invalid OversizeHandling value", Severity.ERROR)
+
+# WA339: Invalid FallbackBehavior value
+WA339 = RuleMeta("WA339", "statement", "Invalid FallbackBehavior value", Severity.ERROR)
+
 AWS_RULE_METAS: list[RuleMeta] = [obj for obj in globals().values() if isinstance(obj, RuleMeta)]

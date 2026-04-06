@@ -225,9 +225,15 @@ class TestStatement:
     def test_wa301_unknown_type(self):
         assert "WA301" in _ids(validate_rules([_rule(Statement={"FooStatement": {}})]))
 
+    def test_wa301_asn_match_statement(self):
+        """AsnMatchStatement is a recognised statement type."""
+        stmt = {"AsnMatchStatement": {"AsnList": [1234]}}
+        assert "WA301" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
     @pytest.mark.parametrize(
         "stype",
         [
+            "AsnMatchStatement",
             "ByteMatchStatement",
             "GeoMatchStatement",
             "IPSetReferenceStatement",
@@ -240,7 +246,7 @@ class TestStatement:
     )
     def test_wa301_known_types(self, stype):
         assert "WA301" not in _ids(
-            validate_rules([_rule(Statement={stype: {"AggregateKeyType": "IP", "Limit": 100}})])
+            validate_rules([_rule(Statement={stype: {"AggregateKeyType": "IP", "Limit": 200}})])
         )
 
     def test_wa302_invalid_arn(self):
@@ -285,8 +291,8 @@ class TestStatement:
         }
         assert "WA302" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
-    def test_wa303_rate_limit_below_100(self):
-        stmt = {"RateBasedStatement": {"Limit": 50, "AggregateKeyType": "IP"}}
+    def test_wa303_rate_limit_below_10(self):
+        stmt = {"RateBasedStatement": {"Limit": 5, "AggregateKeyType": "IP"}}
         assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa303_rate_limit_not_integer(self):
@@ -297,8 +303,13 @@ class TestStatement:
         stmt = {"RateBasedStatement": {"Limit": True, "AggregateKeyType": "IP"}}
         assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
 
-    def test_wa303_rate_limit_exactly_100(self):
-        stmt = {"RateBasedStatement": {"Limit": 100, "AggregateKeyType": "IP"}}
+    def test_wa303_rate_limit_exactly_10(self):
+        stmt = {"RateBasedStatement": {"Limit": 10, "AggregateKeyType": "IP"}}
+        assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa303_rate_limit_50_ok(self):
+        """Value 50 is valid (above the minimum of 10)."""
+        stmt = {"RateBasedStatement": {"Limit": 50, "AggregateKeyType": "IP"}}
         assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
     def test_wa303_rate_limit_missing(self):
@@ -838,6 +849,14 @@ class TestStatementRequiredFields:
         }
         assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa314_asn_match_missing_asn_list(self):
+        stmt = {"AsnMatchStatement": {}}
+        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa314_asn_match_complete(self):
+        stmt = {"AsnMatchStatement": {"AsnList": [64496]}}
+        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
     def test_wa314_does_not_duplicate_wa312(self):
         """ByteMatchStatement uses WA312, not WA314, for required fields."""
         stmt = {"ByteMatchStatement": {}}
@@ -988,16 +1007,20 @@ class TestFieldToMatch:
     @pytest.mark.parametrize(
         "key",
         [
+            "AllQueryArguments",
             "Body",
-            "QueryString",
-            "UriPath",
-            "SingleHeader",
-            "Headers",
             "Cookies",
+            "HeaderOrder",
+            "Headers",
+            "JA3Fingerprint",
+            "JA4Fingerprint",
             "JsonBody",
             "Method",
-            "AllQueryArguments",
+            "QueryString",
+            "SingleHeader",
             "SingleQueryArgument",
+            "UriFragment",
+            "UriPath",
         ],
     )
     def test_wa316_all_valid_keys(self, key):
@@ -3138,6 +3161,12 @@ class TestNestingDepth:
 class TestWcuEstimation:
     """Unit tests for WCU estimation functions."""
 
+    def test_asn_match(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"AsnMatchStatement": {"AsnList": [64496, 64497]}}
+        assert _estimate_wcu(stmt) == 1
+
     def test_byte_match_base(self):
         from octorules_aws.validate import _estimate_wcu
 
@@ -3563,3 +3592,360 @@ class TestIsStrictInt:
         assert _is_strict_int("42") is False
         assert _is_strict_int(3.14) is False
         assert _is_strict_int(None) is False
+
+
+# ---------------------------------------------------------------------------
+# WA337  Invalid custom key type in CustomKeys
+# ---------------------------------------------------------------------------
+class TestCustomKeyTypes:
+    def _rate_stmt(self, custom_keys):
+        return {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "CUSTOM_KEYS",
+                "CustomKeys": custom_keys,
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "key_type",
+        [
+            "ASN",
+            "Cookie",
+            "ForwardedIP",
+            "HTTPMethod",
+            "Header",
+            "IP",
+            "JA3Fingerprint",
+            "JA4Fingerprint",
+            "LabelNamespace",
+            "QueryArgument",
+            "QueryString",
+            "UriPath",
+        ],
+    )
+    def test_wa337_valid_key_types(self, key_type):
+        keys = [{key_type: {"Name": "test"}}] if key_type != "IP" else [{key_type: {}}]
+        stmt = self._rate_stmt(keys)
+        assert "WA337" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa337_invalid_key_type(self):
+        keys = [{"InvalidType": {"Name": "test"}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA337" in _ids(results)
+        wa337 = [r for r in results if r.rule_id == "WA337"]
+        assert "InvalidType" in wa337[0].message
+
+    def test_wa337_multiple_keys_one_invalid(self):
+        keys = [{"Header": {"Name": "x-key"}}, {"BadType": {"Name": "y"}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa337 = [r for r in results if r.rule_id == "WA337"]
+        assert len(wa337) == 1
+        assert "BadType" in wa337[0].message
+
+    def test_wa337_non_dict_entry_skipped(self):
+        """Non-dict entries in CustomKeys should not crash WA337."""
+        keys = ["not-a-dict", {"Header": {"Name": "x"}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA337" not in _ids(results)
+
+    def test_wa337_multi_key_entry_skipped(self):
+        """Entries with != 1 key are skipped by WA337 (other rules may catch them)."""
+        keys = [{"Header": {"Name": "x"}, "IP": {}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA337" not in _ids(results)
+
+    def test_wa337_field_is_set(self):
+        keys = [{"Header": {"Name": "x"}}, {"BadKey": {}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa337 = [r for r in results if r.rule_id == "WA337"]
+        assert "CustomKeys[1]" in wa337[0].field
+
+    def test_wa337_suggestion(self):
+        keys = [{"BadKey": {}}]
+        stmt = self._rate_stmt(keys)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa337 = [r for r in results if r.rule_id == "WA337"]
+        assert wa337[0].suggestion
+        assert "Valid types" in wa337[0].suggestion
+
+
+# ---------------------------------------------------------------------------
+# WA338  Invalid OversizeHandling value
+# ---------------------------------------------------------------------------
+class TestOversizeHandling:
+    def _byte_match_with_ftm(self, ftm_key, ftm_inner):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {ftm_key: ftm_inner},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    @pytest.mark.parametrize("val", ["CONTINUE", "MATCH", "NO_MATCH"])
+    def test_wa338_valid_oversize_handling(self, val):
+        stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": val})
+        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa338_invalid_oversize_handling_body(self):
+        stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": "REJECT"})
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA338" in _ids(results)
+        wa338 = [r for r in results if r.rule_id == "WA338"]
+        assert "REJECT" in wa338[0].message
+        assert "Body.OversizeHandling" in wa338[0].field
+
+    def test_wa338_invalid_oversize_handling_headers(self):
+        stmt = self._byte_match_with_ftm(
+            "Headers",
+            {
+                "MatchPattern": {"IncludedHeaders": ["a"]},
+                "MatchScope": "ALL",
+                "OversizeHandling": "BAD",
+            },
+        )
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA338" in _ids(results)
+        wa338 = [r for r in results if r.rule_id == "WA338"]
+        assert "Headers.OversizeHandling" in wa338[0].field
+
+    def test_wa338_invalid_oversize_handling_cookies(self):
+        stmt = self._byte_match_with_ftm(
+            "Cookies",
+            {
+                "MatchPattern": {"IncludedCookies": ["a"]},
+                "MatchScope": "ALL",
+                "OversizeHandling": "INVALID",
+            },
+        )
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA338" in _ids(results)
+
+    def test_wa338_invalid_oversize_handling_header_order(self):
+        stmt = self._byte_match_with_ftm("HeaderOrder", {"OversizeHandling": "WRONG"})
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA338" in _ids(results)
+        wa338 = [r for r in results if r.rule_id == "WA338"]
+        assert "HeaderOrder.OversizeHandling" in wa338[0].field
+
+    def test_wa338_invalid_oversize_handling_json_body(self):
+        stmt = self._byte_match_with_ftm(
+            "JsonBody",
+            {
+                "MatchScope": "ALL",
+                "InvalidFallbackBehavior": "MATCH",
+                "OversizeHandling": "DROP",
+            },
+        )
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA338" in _ids(results)
+        wa338 = [r for r in results if r.rule_id == "WA338"]
+        assert "JsonBody.OversizeHandling" in wa338[0].field
+
+    def test_wa338_absent_oversize_handling_no_fire(self):
+        """OversizeHandling is optional -- absence should not fire WA338."""
+        stmt = self._byte_match_with_ftm("Body", {})
+        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa338_non_string_oversize_handling_no_fire(self):
+        """Non-string OversizeHandling should not fire WA338."""
+        stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": 42})
+        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa338_suggestion(self):
+        stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": "BAD"})
+        results = validate_rules([_rule(Statement=stmt)])
+        wa338 = [r for r in results if r.rule_id == "WA338"]
+        assert wa338[0].suggestion
+        assert "Valid values" in wa338[0].suggestion
+
+
+# ---------------------------------------------------------------------------
+# WA339  Invalid FallbackBehavior value
+# ---------------------------------------------------------------------------
+class TestFallbackBehavior:
+    def _byte_match_with_ftm(self, ftm_key, ftm_inner):
+        return {
+            "ByteMatchStatement": {
+                "SearchString": "x",
+                "FieldToMatch": {ftm_key: ftm_inner},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+
+    @pytest.mark.parametrize("val", ["MATCH", "NO_MATCH"])
+    def test_wa339_valid_fallback_behavior(self, val):
+        stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": val})
+        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa339_invalid_fallback_ja3(self):
+        stmt = self._byte_match_with_ftm(
+            "JA3Fingerprint", {"FallbackBehavior": "EVALUATE_AS_STRING"}
+        )
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA339" in _ids(results)
+        wa339 = [r for r in results if r.rule_id == "WA339"]
+        assert "EVALUATE_AS_STRING" in wa339[0].message
+        assert "JA3Fingerprint.FallbackBehavior" in wa339[0].field
+
+    def test_wa339_invalid_fallback_ja4(self):
+        stmt = self._byte_match_with_ftm("JA4Fingerprint", {"FallbackBehavior": "IGNORE"})
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA339" in _ids(results)
+        wa339 = [r for r in results if r.rule_id == "WA339"]
+        assert "JA4Fingerprint.FallbackBehavior" in wa339[0].field
+
+    def test_wa339_invalid_fallback_uri_fragment(self):
+        stmt = self._byte_match_with_ftm("UriFragment", {"FallbackBehavior": "DROP"})
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA339" in _ids(results)
+        wa339 = [r for r in results if r.rule_id == "WA339"]
+        assert "UriFragment.FallbackBehavior" in wa339[0].field
+
+    def test_wa339_absent_fallback_no_fire(self):
+        """FallbackBehavior is optional -- absence should not fire WA339."""
+        stmt = self._byte_match_with_ftm("JA3Fingerprint", {})
+        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa339_non_string_fallback_no_fire(self):
+        """Non-string FallbackBehavior should not fire WA339."""
+        stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": 42})
+        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa339_forwarded_ip_config_invalid_fallback(self):
+        """FallbackBehavior in ForwardedIPConfig at RateBasedStatement level."""
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "FORWARDED_IP",
+                "ForwardedIPConfig": {
+                    "HeaderName": "X-Forwarded-For",
+                    "FallbackBehavior": "EVALUATE_AS_STRING",
+                },
+            }
+        }
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA339" in _ids(results)
+        wa339 = [r for r in results if r.rule_id == "WA339"]
+        assert "ForwardedIPConfig.FallbackBehavior" in wa339[0].field
+
+    def test_wa339_forwarded_ip_config_valid_fallback(self):
+        """Valid FallbackBehavior in ForwardedIPConfig should not fire."""
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "FORWARDED_IP",
+                "ForwardedIPConfig": {
+                    "HeaderName": "X-Forwarded-For",
+                    "FallbackBehavior": "MATCH",
+                },
+            }
+        }
+        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa339_suggestion(self):
+        stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": "BAD"})
+        results = validate_rules([_rule(Statement=stmt)])
+        wa339 = [r for r in results if r.rule_id == "WA339"]
+        assert wa339[0].suggestion
+        assert "Valid values" in wa339[0].suggestion
+
+
+# ---------------------------------------------------------------------------
+# WA303  EvaluationWindowSec validation
+# ---------------------------------------------------------------------------
+class TestEvaluationWindowSec:
+    def _rate_stmt(self, **extra):
+        return {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "IP",
+                **extra,
+            }
+        }
+
+    @pytest.mark.parametrize("val", [60, 120, 300, 600])
+    def test_wa303_valid_evaluation_window(self, val):
+        stmt = self._rate_stmt(EvaluationWindowSec=val)
+        assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa303_invalid_evaluation_window(self):
+        stmt = self._rate_stmt(EvaluationWindowSec=180)
+        results = validate_rules([_rule(Statement=stmt)])
+        assert "WA303" in _ids(results)
+        wa303 = [r for r in results if r.rule_id == "WA303"]
+        eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
+        assert len(eval_window_results) == 1
+        assert "180" in eval_window_results[0].message
+
+    def test_wa303_evaluation_window_string_rejected(self):
+        stmt = self._rate_stmt(EvaluationWindowSec="300")
+        results = validate_rules([_rule(Statement=stmt)])
+        wa303 = [r for r in results if r.rule_id == "WA303"]
+        eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
+        assert len(eval_window_results) == 1
+
+    def test_wa303_evaluation_window_bool_rejected(self):
+        stmt = self._rate_stmt(EvaluationWindowSec=True)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa303 = [r for r in results if r.rule_id == "WA303"]
+        eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
+        assert len(eval_window_results) == 1
+
+    def test_wa303_evaluation_window_absent_ok(self):
+        """EvaluationWindowSec is optional -- absence should not fire."""
+        stmt = self._rate_stmt()
+        results = validate_rules([_rule(Statement=stmt)])
+        wa303 = [r for r in results if r.rule_id == "WA303"]
+        eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
+        assert len(eval_window_results) == 0
+
+    def test_wa303_evaluation_window_field_is_set(self):
+        stmt = self._rate_stmt(EvaluationWindowSec=999)
+        results = validate_rules([_rule(Statement=stmt)])
+        wa303 = [r for r in results if r.rule_id == "WA303"]
+        eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
+        assert eval_window_results[0].field == "Statement.RateBasedStatement.EvaluationWindowSec"
+
+
+# ---------------------------------------------------------------------------
+# WCU: RegexMatchStatement base WCU is 3 (not 5)
+# ---------------------------------------------------------------------------
+class TestRegexMatchWcu:
+    def test_regex_match_base_wcu(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "RegexMatchStatement": {
+                "RegexString": "^/api/.*",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        # Base 3 + 1 text transformation = 4
+        assert _estimate_wcu(stmt) == 4
+
+    def test_regex_match_multiple_transforms_wcu(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "RegexMatchStatement": {
+                "RegexString": "^/api/.*",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [
+                    {"Priority": 0, "Type": "NONE"},
+                    {"Priority": 1, "Type": "LOWERCASE"},
+                    {"Priority": 2, "Type": "URL_DECODE"},
+                ],
+            }
+        }
+        # Base 3 + 3 text transformations = 6
+        assert _estimate_wcu(stmt) == 6

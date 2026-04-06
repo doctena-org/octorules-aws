@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-04-06
+
+### Added
+- `AsnMatchStatement` support (known type, required fields, WCU estimation)
+- `HeaderOrder`, `JA3Fingerprint`, `JA4Fingerprint`, `UriFragment` FieldToMatch keys
+- WA337 lint rule — validates `CustomKeys` individual entry types
+- WA338 lint rule — validates `OversizeHandling` enum values
+- WA339 lint rule — validates `FallbackBehavior` enum values
+- `EvaluationWindowSec` validation for rate-based statements
+
+### Fixed
+- `RateBasedStatement.Limit` minimum corrected from 100 to 10 (matches AWS API)
+- `RegexMatchStatement` WCU base cost corrected from 5 to 3
+
 ## [0.7.0] - 2026-04-05
 
 ### Added

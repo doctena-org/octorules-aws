@@ -38,6 +38,7 @@ _VALID_OVERRIDE_ACTIONS = frozenset({"None", "Count"})
 _KNOWN_STATEMENT_TYPES = frozenset(
     {
         "AndStatement",
+        "AsnMatchStatement",
         "ByteMatchStatement",
         "GeoMatchStatement",
         "IPSetReferenceStatement",
@@ -68,6 +69,29 @@ _VISIBILITY_FIELDS: dict[str, type] = {
 _VALID_AGGREGATE_KEY_TYPES = frozenset({"IP", "FORWARDED_IP", "CUSTOM_KEYS", "CONSTANT"})
 _MAX_RATE_LIMIT = 2_000_000_000
 _MAX_CUSTOM_KEYS = 5
+_VALID_EVALUATION_WINDOW_SECS = frozenset({60, 120, 300, 600})
+
+# --- WA337: Valid custom aggregation key types --------------------------------
+_VALID_CUSTOM_KEY_TYPES = frozenset(
+    {
+        "ASN",
+        "Cookie",
+        "ForwardedIP",
+        "HTTPMethod",
+        "Header",
+        "IP",
+        "JA3Fingerprint",
+        "JA4Fingerprint",
+        "LabelNamespace",
+        "QueryArgument",
+        "QueryString",
+        "UriPath",
+    }
+)
+
+# --- WA338/WA339: OversizeHandling and FallbackBehavior ----------------------
+_VALID_OVERSIZE_HANDLING = frozenset({"CONTINUE", "MATCH", "NO_MATCH"})
+_VALID_FALLBACK_BEHAVIORS = frozenset({"MATCH", "NO_MATCH"})
 _MAX_TEXT_TRANSFORMATIONS = 10
 _MAX_MATCH_PATTERN_ENTRIES = 5
 
@@ -104,6 +128,7 @@ _VALID_RULE_FIELDS = frozenset(
 # GeoMatchStatement.CountryCodes is handled by _check_geo_match (WA313).
 # They are excluded here to avoid double-reporting.
 _STATEMENT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "AsnMatchStatement": ("AsnList",),
     "IPSetReferenceStatement": ("ARN",),
     "RegexMatchStatement": ("RegexString", "FieldToMatch", "TextTransformations"),
     "RegexPatternSetReferenceStatement": ("ARN", "FieldToMatch", "TextTransformations"),
@@ -131,16 +156,20 @@ _VALID_SENSITIVITY_LEVELS = frozenset({"LOW", "HIGH"})
 # --- WA316: FieldToMatch valid keys ----------------------------------------
 _VALID_FIELD_TO_MATCH_KEYS = frozenset(
     {
+        "AllQueryArguments",
         "Body",
-        "QueryString",
-        "UriPath",
-        "SingleHeader",
-        "Headers",
         "Cookies",
+        "HeaderOrder",
+        "Headers",
+        "JA3Fingerprint",
+        "JA4Fingerprint",
         "JsonBody",
         "Method",
-        "AllQueryArguments",
+        "QueryString",
+        "SingleHeader",
         "SingleQueryArgument",
+        "UriFragment",
+        "UriPath",
     }
 )
 
@@ -854,18 +883,18 @@ def _check_rate_based(
                 _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
-                    message=f"RateBasedStatement.Limit must be an integer >= 100, got {lim!r}",
+                    message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.Limit",
                 )
             )
-        elif lim < 100:
+        elif lim < 10:
             results.append(
                 _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
-                    message=f"RateBasedStatement.Limit must be an integer >= 100, got {lim!r}",
+                    message=f"RateBasedStatement.Limit must be an integer >= 10, got {lim!r}",
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.Limit",
@@ -908,6 +937,24 @@ def _check_rate_based(
                     ref=ref,
                     field="Statement.RateBasedStatement.AggregateKeyType",
                     suggestion=f"Valid values: {sorted(_VALID_AGGREGATE_KEY_TYPES)}",
+                )
+            )
+
+    # WA303: EvaluationWindowSec validation (optional field)
+    if "EvaluationWindowSec" in rbs:
+        ews = rbs["EvaluationWindowSec"]
+        if not _is_strict_int(ews) or ews not in _VALID_EVALUATION_WINDOW_SECS:
+            results.append(
+                _result(
+                    rule_id="WA303",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"RateBasedStatement.EvaluationWindowSec must be one of"
+                        f" {sorted(_VALID_EVALUATION_WINDOW_SECS)}, got {ews!r}"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.RateBasedStatement.EvaluationWindowSec",
                 )
             )
 
@@ -1485,6 +1532,55 @@ def _check_field_to_match(
             )
         )
 
+    # WA338: OversizeHandling validation (Body, JsonBody, Headers, Cookies, HeaderOrder)
+    for ftm_key in ("Body", "JsonBody", "Headers", "Cookies", "HeaderOrder"):
+        if ftm_key in ftm:
+            container = ftm[ftm_key]
+            if isinstance(container, dict):
+                oh = container.get("OversizeHandling")
+                if isinstance(oh, str) and oh not in _VALID_OVERSIZE_HANDLING:
+                    results.append(
+                        _result(
+                            rule_id="WA338",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"FieldToMatch {ftm_key}.OversizeHandling must be one of:"
+                                f" {', '.join(sorted(_VALID_OVERSIZE_HANDLING))} (got {oh!r})"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{field_prefix}.{ftm_key}.OversizeHandling",
+                            suggestion=f"Valid values: {sorted(_VALID_OVERSIZE_HANDLING)}",
+                        )
+                    )
+
+    # WA339: FallbackBehavior validation (JA3Fingerprint, JA4Fingerprint, UriFragment)
+    for ftm_key in ("JA3Fingerprint", "JA4Fingerprint", "UriFragment"):
+        if ftm_key in ftm:
+            container = ftm[ftm_key]
+            if isinstance(container, dict):
+                fb = container.get("FallbackBehavior")
+                if isinstance(fb, str) and fb not in _VALID_FALLBACK_BEHAVIORS:
+                    results.append(
+                        _result(
+                            rule_id="WA339",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"FieldToMatch {ftm_key}.FallbackBehavior must be one of:"
+                                f" {', '.join(sorted(_VALID_FALLBACK_BEHAVIORS))} (got {fb!r})"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{field_prefix}.{ftm_key}.FallbackBehavior",
+                            suggestion=f"Valid values: {sorted(_VALID_FALLBACK_BEHAVIORS)}",
+                        )
+                    )
+
+    # WA339: FallbackBehavior in ForwardedIPConfig (inside IPSetReferenceStatement etc.)
+    # Note: ForwardedIPConfig is at inner level, not inside FieldToMatch, so it's
+    # handled by _check_rate_based_conditional via ForwardedIPConfig check.
+    # Here we only check FieldToMatch sub-keys.
+
 
 def _check_text_transformations(
     stype: str,
@@ -1675,6 +1771,27 @@ def _check_rate_based_conditional(
                 )
             )
 
+        # WA337: Validate individual CustomKeys entry types
+        if isinstance(custom_keys, list):
+            for idx, entry in enumerate(custom_keys):
+                if not isinstance(entry, dict):
+                    continue
+                entry_keys = set(entry)
+                if len(entry_keys) == 1:
+                    key_type = next(iter(entry_keys))
+                    if key_type not in _VALID_CUSTOM_KEY_TYPES:
+                        results.append(
+                            _result(
+                                rule_id="WA337",
+                                severity=Severity.ERROR,
+                                message=(f"CustomKeys[{idx}] has invalid type '{key_type}'"),
+                                phase=phase,
+                                ref=ref,
+                                field=f"Statement.RateBasedStatement.CustomKeys[{idx}]",
+                                suggestion=(f"Valid types: {sorted(_VALID_CUSTOM_KEY_TYPES)}"),
+                            )
+                        )
+
     if akt == "FORWARDED_IP":
         if "ForwardedIPConfig" not in inner:
             results.append(
@@ -1688,6 +1805,26 @@ def _check_rate_based_conditional(
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.ForwardedIPConfig",
+                )
+            )
+
+    # WA339: FallbackBehavior in ForwardedIPConfig
+    fip_config = inner.get("ForwardedIPConfig")
+    if isinstance(fip_config, dict):
+        fb = fip_config.get("FallbackBehavior")
+        if isinstance(fb, str) and fb not in _VALID_FALLBACK_BEHAVIORS:
+            results.append(
+                _result(
+                    rule_id="WA339",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"ForwardedIPConfig.FallbackBehavior must be one of:"
+                        f" {', '.join(sorted(_VALID_FALLBACK_BEHAVIORS))} (got {fb!r})"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Statement.RateBasedStatement.ForwardedIPConfig.FallbackBehavior",
+                    suggestion=f"Valid values: {sorted(_VALID_FALLBACK_BEHAVIORS)}",
                 )
             )
 
@@ -1807,8 +1944,9 @@ def _check_arns(
 # Base WCU costs per statement type. Types with TextTransformations get
 # +1 per transformation on top of the base.
 _WCU_BASE: dict[str, int] = {
+    "AsnMatchStatement": 1,
     "ByteMatchStatement": 2,
-    "RegexMatchStatement": 5,
+    "RegexMatchStatement": 3,
     "RegexPatternSetReferenceStatement": 5,
     "GeoMatchStatement": 2,
     "IPSetReferenceStatement": 1,

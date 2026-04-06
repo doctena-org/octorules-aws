@@ -187,14 +187,14 @@ IP lists (`kind: ip`) map to AWS WAF IP Sets. Regex lists (`kind: regex`) map to
 
 ## Linting
 
-75 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
+78 AWS-specific lint rules (WA prefix) covering structure, actions, statements, and cross-rule analysis:
 
 | Prefix | Category | Rules |
 |--------|----------|-------|
 | WA001-WA005, WA010, WA020-WA022, WA154 | Structure & YAML | 10 |
 | WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA343 | Statement deep validation | 39 |
+| WA156-WA161, WA300-WA343 | Statement deep validation | 42 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
 | WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |

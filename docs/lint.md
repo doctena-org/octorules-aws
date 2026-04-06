@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **75 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **78 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -91,6 +91,9 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA323](#wa323--geomatchstatement-exceeds-25-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
 | [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
 | [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
+| [WA337](#wa337--invalid-custom-key-type-in-customkeys) | Invalid custom key type in CustomKeys | ERROR |
+| [WA338](#wa338--invalid-oversizehandling-value) | Invalid OversizeHandling value | ERROR |
+| [WA339](#wa339--invalid-fallbackbehavior-value) | Invalid FallbackBehavior value | ERROR |
 | [WA330](#wa330--statement-nesting-exceeds-maximum-depth) | Statement nesting exceeds maximum depth | ERROR |
 | [WA331](#wa331--texttransformations-exceeds-maximum-of-10-per-statement) | TextTransformations exceeds maximum of 10 per statement | ERROR |
 | [WA332](#wa332--duplicate-texttransformation-priority) | Duplicate TextTransformation Priority | ERROR |
@@ -130,7 +133,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA001-WA005, WA010, WA020-WA022, WA154 | Structure & YAML | 10 |
 | WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA343 | Statement validation | 39 |
+| WA156-WA161, WA300-WA343 | Statement validation | 42 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
 | WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |
@@ -575,23 +578,23 @@ An ARN string was found that starts with `arn:` but does not match the expected 
 
 **Severity:** ERROR
 
-The `Limit` field in a `RateBasedStatement` must be an integer >= 100. AWS WAF requires the rate limit to be at least 100 requests per 5-minute window.
+The `Limit` field in a `RateBasedStatement` must be an integer >= 10. AWS WAF requires the rate limit to be at least 10 requests per evaluation window.
 
 **Triggers on:**
 
 ```yaml
     Statement:
       RateBasedStatement:
-        Limit: 50              # below minimum of 100
+        Limit: 5               # below minimum of 10
         AggregateKeyType: IP
 ```
 
-Also fires when `Limit` is entirely missing from `RateBasedStatement`.
+Also fires when `Limit` is entirely missing from `RateBasedStatement`, or when `EvaluationWindowSec` has an invalid value (must be one of 60, 120, 300, 600).
 
-**Fix:** Set `Limit` to at least 100:
+**Fix:** Set `Limit` to at least 10:
 
 ```yaml
-        Limit: 100
+        Limit: 10
 ```
 
 ### WA304 -- RateBasedStatement missing AggregateKeyType
@@ -1124,6 +1127,71 @@ The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 
 ```
 
 **Fix:** Reduce the list to 5 or fewer patterns.
+
+### WA337 -- Invalid custom key type in CustomKeys
+
+**Severity:** ERROR
+
+A `CustomKeys` entry in a `RateBasedStatement` uses an unrecognized key type. Each entry must have exactly one key from the valid set: `ASN`, `Cookie`, `ForwardedIP`, `HTTPMethod`, `Header`, `IP`, `JA3Fingerprint`, `JA4Fingerprint`, `LabelNamespace`, `QueryArgument`, `QueryString`, `UriPath`.
+
+**Triggers on:**
+
+```yaml
+    Statement:
+      RateBasedStatement:
+        Limit: 200
+        AggregateKeyType: CUSTOM_KEYS
+        CustomKeys:
+          - InvalidType:        # not a valid custom key type
+              Name: test
+```
+
+**Fix:** Use a valid custom key type:
+
+```yaml
+          - Header:
+              Name: x-api-key
+```
+
+### WA338 -- Invalid OversizeHandling value
+
+**Severity:** ERROR
+
+The `OversizeHandling` field in a FieldToMatch component (`Body`, `JsonBody`, `Headers`, `Cookies`, `HeaderOrder`) must be one of: `CONTINUE`, `MATCH`, `NO_MATCH`. This controls how AWS WAF handles requests whose inspected component exceeds the size limit.
+
+**Triggers on:**
+
+```yaml
+        FieldToMatch:
+          Body:
+            OversizeHandling: REJECT    # not a valid value
+```
+
+**Fix:** Use a valid `OversizeHandling` value:
+
+```yaml
+            OversizeHandling: CONTINUE
+```
+
+### WA339 -- Invalid FallbackBehavior value
+
+**Severity:** ERROR
+
+The `FallbackBehavior` field in `JA3Fingerprint`, `JA4Fingerprint`, `UriFragment` (inside FieldToMatch), or `ForwardedIPConfig` (inside RateBasedStatement) must be one of: `MATCH`, `NO_MATCH`. This controls the match result when the field cannot be evaluated.
+
+**Triggers on:**
+
+```yaml
+        FieldToMatch:
+          JA3Fingerprint:
+            FallbackBehavior: EVALUATE_AS_STRING    # not valid here
+```
+
+**Fix:** Use a valid `FallbackBehavior` value:
+
+```yaml
+            FallbackBehavior: MATCH
+```
 
 ### WA330 -- Statement nesting exceeds maximum depth
 
