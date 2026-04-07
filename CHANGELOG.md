@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [0.7.2] - 2026-04-07
+
+### Changed
+- `collect_ipset_arns`/`collect_regex_set_arns` refactored to shared internal
+  helper (no API change).
 
 ## [0.7.1] - 2026-04-06
 
@@ -61,11 +68,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - WA303 (RateBasedStatement.Limit) only validated when `Limit` was present —
   now also fires when `Limit` is entirely missing from `RateBasedStatement`.
 - WA303 minimum `Limit` threshold corrected from 10 to 100 to match the AWS
-  WAF API requirement.
+  WAF API requirement. *(Note: this was incorrect — corrected back to 10 in
+  v0.7.1 after AWS lowered the minimum in August 2024.)*
 
 ### Changed
 - `register_aws_linter` now uses double-checked locking with `threading.Lock`
-  for thread-safe registration.
+  for thread-safe registration. *(Note: reverted to simple flag guard — Python's
+  import lock already serializes registration.)*
 
 ## [0.6.1] - 2026-04-03
 

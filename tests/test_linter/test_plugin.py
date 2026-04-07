@@ -4,6 +4,7 @@ from octorules.linter.engine import LintContext, Severity
 from octorules.linter.plugin import get_registered_plugins
 
 from octorules_aws.linter._plugin import AWS_RULE_IDS, aws_lint
+from octorules_aws.linter._rules import AWS_RULE_METAS
 
 
 class TestPluginRegistration:
@@ -18,6 +19,14 @@ class TestPluginRegistration:
     def test_all_rule_ids_start_with_wa(self):
         for rule_id in AWS_RULE_IDS:
             assert rule_id.startswith("WA"), f"Expected WA prefix, got {rule_id}"
+
+    def test_plugin_rule_ids_match_metas(self):
+        meta_ids = frozenset(r.rule_id for r in AWS_RULE_METAS)
+        assert AWS_RULE_IDS == meta_ids, (
+            f"AWS_RULE_IDS and AWS_RULE_METAS are out of sync: "
+            f"missing from metas: {AWS_RULE_IDS - meta_ids}, "
+            f"missing from plugin: {meta_ids - AWS_RULE_IDS}"
+        )
 
 
 class TestAwsLint:
