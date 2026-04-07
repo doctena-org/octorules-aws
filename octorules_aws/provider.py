@@ -324,12 +324,14 @@ class AwsWafProvider:
                 "Id": acl["Id"],
                 "ARN": acl.get("ARN", ""),
             }
+        log.debug("Resolved %s -> %s", zone_name, acl["Id"])
         return acl["Id"]
 
     @_wrap_provider_errors
     def list_zones(self) -> list[str]:
         """List all Web ACL names available in this region/scope."""
         all_acls = self._paginate_list(self._client.list_web_acls, "WebACLs")
+        log.debug("list_zones: %d Web ACLs", len(all_acls))
         return [acl["Name"] for acl in all_acls]
 
     # -- ACL settings --
@@ -344,6 +346,7 @@ class AwsWafProvider:
         from octorules_aws._acl_settings import normalize_acl_settings
 
         acl, _ = self._get_web_acl(scope)
+        log.debug("GET acl_settings %s", scope.zone_id)
         return normalize_acl_settings(acl)
 
     @_wrap_provider_errors
@@ -369,6 +372,7 @@ class AwsWafProvider:
             self._client.update_web_acl(**kwargs)
 
         self._with_lock_retry(_op, f"WebACL {scope.zone_id} settings")
+        log.debug("Updated acl_settings for %s", scope.zone_id)
 
     # -- Phase rules --
 
@@ -379,7 +383,9 @@ class AwsWafProvider:
             return []
         acl, _ = self._get_web_acl(scope)
         rules = acl.get("Rules", [])
-        return [_normalize_rule(r) for r in rules if _classify_phase(r) == provider_id]
+        result = [_normalize_rule(r) for r in rules if _classify_phase(r) == provider_id]
+        log.debug("get_phase_rules %s/%s: %d rules", scope.zone_id, provider_id, len(result))
+        return result
 
     @_wrap_provider_errors
     def put_phase_rules(self, scope: Scope, provider_id: str, rules: list[dict]) -> int:
@@ -414,7 +420,14 @@ class AwsWafProvider:
             self._client.update_web_acl(**kwargs)
             return len(new_rules)
 
-        return self._with_lock_retry(_op, f"WebACL {scope.zone_id}")
+        count = self._with_lock_retry(_op, f"WebACL {scope.zone_id}")
+        log.debug(
+            "put_phase_rules %s/%s: wrote %d rules",
+            scope.zone_id,
+            provider_id,
+            len(rules),
+        )
+        return count
 
     @_wrap_provider_errors
     def get_all_phase_rules(
@@ -428,6 +441,7 @@ class AwsWafProvider:
         if not phases_to_fetch:
             return PhaseRulesResult({}, failed_phases=[])
 
+        log.debug("Fetching %d phase(s) for %s", len(phases_to_fetch), scope.zone_id)
         acl, _ = self._get_web_acl(scope)
         all_rules = acl.get("Rules", [])
 
@@ -445,6 +459,7 @@ class AwsWafProvider:
     def list_custom_rulesets(self, scope: Scope) -> list[dict]:
         """List Rule Groups."""
         all_rgs = self._paginate_list(self._client.list_rule_groups, "RuleGroups")
+        log.debug("LIST rule_groups: %d", len(all_rgs))
         return [
             {
                 "id": rg.get("Id", ""),
@@ -468,6 +483,7 @@ class AwsWafProvider:
             Id=ruleset_id,
         )
         rules = response.get("RuleGroup", {}).get("Rules", [])
+        log.debug("GET rule_group %s: %d rules", ruleset_id, len(rules))
         return [_normalize_rule(r) for r in rules]
 
     @_wrap_provider_errors
@@ -495,7 +511,9 @@ class AwsWafProvider:
             )
             return len(rules)
 
-        return self._with_lock_retry(_op, f"RuleGroup {ruleset_id}")
+        count = self._with_lock_retry(_op, f"RuleGroup {ruleset_id}")
+        log.debug("PUT rule_group %s: %d rules", ruleset_id, len(rules))
+        return count
 
     @_wrap_provider_errors
     def create_custom_ruleset(
@@ -515,6 +533,7 @@ class AwsWafProvider:
         ruleset_id = summary.get("Id", "")
         if not ruleset_id:
             raise ProviderError(f"create_rule_group response missing Summary.Id (name={name!r})")
+        log.debug("CREATE rule_group %s: id=%s", name, ruleset_id)
         return {"id": ruleset_id, "name": summary.get("Name", name)}
 
     @_wrap_provider_errors
@@ -534,6 +553,7 @@ class AwsWafProvider:
             )
 
         self._with_lock_retry(_op, f"RuleGroup {ruleset_id} delete")
+        log.debug("DELETE rule_group %s", ruleset_id)
 
     @_wrap_provider_errors
     def get_all_custom_rulesets(
@@ -575,6 +595,7 @@ class AwsWafProvider:
         if not meta_list:
             return {}
 
+        log.debug("Fetching %d rule group(s)", len(meta_list))
         results: dict[str, dict] = {}
         for meta in meta_list:
             rid = meta["id"]
@@ -799,14 +820,19 @@ class AwsWafProvider:
     @_wrap_provider_errors
     def list_lists(self, scope: Scope) -> list[dict]:
         """List all IP Sets and Regex Pattern Sets."""
-        return self._list_ip_sets(scope) + self._list_regex_pattern_sets(scope)
+        result = self._list_ip_sets(scope) + self._list_regex_pattern_sets(scope)
+        log.debug("LIST lists: %d total", len(result))
+        return result
 
     @_wrap_provider_errors
     def create_list(self, scope: Scope, name: str, kind: str, description: str = "") -> dict:
         """Create a new IP Set or Regex Pattern Set based on kind."""
         if kind == "regex":
-            return self._create_regex_pattern_set(scope, name, description)
-        return self._create_ip_set(scope, name, kind, description)
+            result = self._create_regex_pattern_set(scope, name, description)
+        else:
+            result = self._create_ip_set(scope, name, kind, description)
+        log.debug("CREATE list %s kind=%s: id=%s", name, kind, result.get("id", ""))
+        return result
 
     @_wrap_provider_errors
     def delete_list(self, scope: Scope, list_id: str) -> None:
@@ -816,10 +842,12 @@ class AwsWafProvider:
         """
         try:
             self._delete_ip_set(scope, list_id)
+            log.debug("DELETE list %s (ip_set)", list_id)
             return
         except ConfigError:
             pass
         self._delete_regex_pattern_set(scope, list_id)
+        log.debug("DELETE list %s (regex_pattern_set)", list_id)
 
     @_wrap_provider_errors
     def update_list_description(self, scope: Scope, list_id: str, description: str) -> None:
@@ -877,10 +905,14 @@ class AwsWafProvider:
         """Fetch items from an IP Set or Regex Pattern Set."""
         # Try IP Set first
         try:
-            return self._get_ip_set_items(scope, list_id, _cache=_ip_cache)
+            items = self._get_ip_set_items(scope, list_id, _cache=_ip_cache)
+            log.debug("GET list_items %s: %d items (ip_set)", list_id, len(items))
+            return items
         except ConfigError:
             pass
-        return self._get_regex_pattern_set_items(scope, list_id)
+        items = self._get_regex_pattern_set_items(scope, list_id)
+        log.debug("GET list_items %s: %d items (regex_pattern_set)", list_id, len(items))
+        return items
 
     @_wrap_provider_errors
     def put_list_items(self, scope: Scope, list_id: str, items: list[dict]) -> str:
@@ -891,15 +923,21 @@ class AwsWafProvider:
         """
         # Detect kind by checking which item keys are present
         if items and "regex" in items[0]:
-            return self._put_regex_pattern_set_items(scope, list_id, items)
+            result = self._put_regex_pattern_set_items(scope, list_id, items)
+            log.debug("PUT list_items %s: %d items (regex_pattern_set)", list_id, len(items))
+            return result
 
         # Try IP Set first
         try:
             self._find_ip_set(list_id)
-            return self._put_ip_set_items(scope, list_id, items)
+            result = self._put_ip_set_items(scope, list_id, items)
+            log.debug("PUT list_items %s: %d items (ip_set)", list_id, len(items))
+            return result
         except ConfigError:
             pass
-        return self._put_regex_pattern_set_items(scope, list_id, items)
+        result = self._put_regex_pattern_set_items(scope, list_id, items)
+        log.debug("PUT list_items %s: %d items (regex_pattern_set)", list_id, len(items))
+        return result
 
     @_wrap_provider_errors
     def poll_bulk_operation(
@@ -950,6 +988,7 @@ class AwsWafProvider:
         if not all_meta:
             return {}
 
+        log.debug("Fetching items for %d list(s)", len(all_meta))
         results: dict[str, dict] = {}
         for meta in all_meta:
             if meta["_source"] == "ip":
