@@ -35,6 +35,42 @@ def _ids(results: list[LintResult]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# WA023: Rule entry is not a dict
+# ---------------------------------------------------------------------------
+class TestWA023RuleEntryNotDict:
+    def test_string_entry(self):
+        results = validate_rules(["not-a-dict"], phase="aws_waf_custom_rules")
+        assert "WA023" in _ids(results)
+
+    def test_int_entry(self):
+        results = validate_rules([42], phase="aws_waf_custom_rules")
+        assert "WA023" in _ids(results)
+
+    def test_none_entry(self):
+        results = validate_rules([None], phase="aws_waf_custom_rules")
+        assert "WA023" in _ids(results)
+
+    def test_list_entry(self):
+        results = validate_rules([[1, 2]], phase="aws_waf_custom_rules")
+        assert "WA023" in _ids(results)
+
+    def test_mixed_valid_and_invalid(self):
+        """Non-dict entries produce WA023; valid dicts are still checked."""
+        results = validate_rules(["bad", _rule()], phase="aws_waf_custom_rules")
+        assert "WA023" in _ids(results)
+        # The valid rule should NOT produce WA023
+        assert _ids(results).count("WA023") == 1
+
+    def test_non_dict_skips_remaining_checks(self):
+        """A non-dict entry should not trigger WA001/WA002/etc."""
+        results = validate_rules(["bad"], phase="aws_waf_custom_rules")
+        ids = _ids(results)
+        assert "WA023" in ids
+        assert "WA001" not in ids
+        assert "WA002" not in ids
+
+
+# ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
 class TestValidRules:

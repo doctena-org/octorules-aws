@@ -79,6 +79,10 @@ WA102 = RuleMeta("WA102", "priority", "Non-contiguous rule priorities", Severity
 # WA022: Duplicate ref
 WA022 = RuleMeta("WA022", "structure", "Duplicate ref within phase", Severity.ERROR)
 
+# WA023-WA024: Type checks
+WA023 = RuleMeta("WA023", "structure", "Rule entry is not a dict", Severity.ERROR)
+WA024 = RuleMeta("WA024", "structure", "Phase value is not a list", Severity.ERROR)
+
 # WA323-WA325: Statement limit checks
 WA323 = RuleMeta("WA323", "statement", "GeoMatchStatement exceeds 50 country codes", Severity.ERROR)
 WA324 = RuleMeta(

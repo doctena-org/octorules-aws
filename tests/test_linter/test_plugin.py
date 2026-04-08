@@ -68,14 +68,38 @@ class TestAwsLint:
         assert "aws_waf_custom_rules" not in phases
         assert "aws_waf_rate_rules" in phases
 
-    def test_skips_non_list_rules(self):
-        """aws_lint should skip phases whose value is not a list."""
+    def test_non_list_phase_emits_wa024(self):
+        """aws_lint should emit WA024 when a phase value is not a list."""
         ctx = LintContext()
         rules_data = {
             "aws_waf_custom_rules": "not-a-list",
         }
         aws_lint(rules_data, ctx)
-        assert len(ctx.results) == 0
+        wa024 = [r for r in ctx.results if r.rule_id == "WA024"]
+        assert len(wa024) == 1
+        assert wa024[0].phase == "aws_waf_custom_rules"
+        assert "not a list" in wa024[0].message
+
+    def test_non_list_phase_dict_emits_wa024(self):
+        """A dict value for a phase should also trigger WA024."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": {"ref": "oops"},
+        }
+        aws_lint(rules_data, ctx)
+        wa024 = [r for r in ctx.results if r.rule_id == "WA024"]
+        assert len(wa024) == 1
+
+    def test_non_list_phase_skips_validate(self):
+        """A non-list phase should not produce per-rule errors (no crash)."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": 42,
+        }
+        aws_lint(rules_data, ctx)
+        ids = [r.rule_id for r in ctx.results]
+        assert "WA024" in ids
+        assert "WA001" not in ids
 
     def test_valid_rules_no_errors(self):
         """aws_lint should produce no results for valid rules."""

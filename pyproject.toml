@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "octorules-aws"
-version = "0.7.3"
+version = "0.7.4"
 description = "AWS WAF provider for octorules"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "octorules>=0.23.0",
+    "octorules>=0.24.0",
     "boto3>=1.26,<2.0",
 ]
 

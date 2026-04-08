@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **78 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **80 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -58,6 +58,8 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA020](#wa020--unknown-top-level-rule-field) | Unknown top-level rule field | WARNING |
 | [WA021](#wa021--actionoverrideaction-must-be-dict) | Action/OverrideAction must be dict | ERROR |
 | [WA022](#wa022--duplicate-ref-within-phase) | Duplicate ref within phase | ERROR |
+| [WA023](#wa023--rule-entry-is-not-a-dict) | Rule entry is not a dict | ERROR |
+| [WA024](#wa024--phase-value-is-not-a-list) | Phase value is not a list | ERROR |
 | [WA100](#wa100--priority-must-be-a-non-negative-integer) | Priority must be a non-negative integer | ERROR |
 | [WA101](#wa101--duplicate-priority-across-rules) | Duplicate Priority across rules | ERROR |
 | [WA157](#wa157--excludedrules-must-be-a-list-of-dicts-with-name) | ExcludedRules must be a list of dicts with Name | ERROR |
@@ -130,7 +132,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 
 | WA Range | Category | Rules |
 |----------|----------|-------|
-| WA001-WA005, WA010, WA020-WA022, WA154 | Structure & YAML | 10 |
+| WA001-WA005, WA010, WA020-WA024, WA154 | Structure & YAML | 12 |
 | WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
 | WA156-WA161, WA300-WA343 | Statement validation | 42 |
@@ -386,6 +388,36 @@ aws_waf_custom_rules:
 ```
 
 **Fix:** Give each rule a unique `ref`.
+
+### WA023 -- Rule entry is not a dict
+
+**Severity:** ERROR
+
+A rule entry in a phase list is not a dict (e.g., a bare string or number). Each entry must be a YAML mapping.
+
+**Triggers on:**
+
+```yaml
+aws_waf_custom_rules:
+  - not-a-dict
+  - 42
+```
+
+**Fix:** Replace the entry with a valid rule mapping.
+
+### WA024 -- Phase value is not a list
+
+**Severity:** ERROR
+
+A phase key has a non-list value (e.g., a string or dict instead of a YAML sequence). Each phase must contain a list of rules.
+
+**Triggers on:**
+
+```yaml
+aws_waf_custom_rules: "not a list"
+```
+
+**Fix:** Replace the value with a YAML list of rules.
 
 ### WA154 -- RuleLabels uses reserved namespace
 
