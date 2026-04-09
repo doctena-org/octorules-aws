@@ -818,6 +818,7 @@ def _validate_statement(
                 field="Statement",
             )
         )
+        return
 
     for k in keys:
         if k not in _KNOWN_STATEMENT_TYPES:

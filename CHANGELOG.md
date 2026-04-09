@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.5] - 2026-04-09
+
+### Fixed
+- WA300 now returns early when a statement has zero or multiple type keys,
+  preventing confusing cascading errors from downstream checks.
+- Pre-commit hook now runs `yamllint` on workflow files.
+
 ## [0.7.4] - 2026-04-08
 
 ### Added

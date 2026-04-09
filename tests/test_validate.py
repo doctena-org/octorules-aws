@@ -258,6 +258,15 @@ class TestStatement:
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
         assert "WA300" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa300_multiple_types_no_cascading_errors(self):
+        """WA300 should stop further validation — no downstream type-specific errors."""
+        stmt = {"ByteMatchStatement": {}, "GeoMatchStatement": {}}
+        ids = _ids(validate_rules([_rule(Statement=stmt)]))
+        assert "WA300" in ids
+        # After WA300, no type-specific checks should fire
+        assert "WA314" not in ids  # required field checks
+        assert "WA301" not in ids  # unknown type checks
+
     def test_wa301_unknown_type(self):
         assert "WA301" in _ids(validate_rules([_rule(Statement={"FooStatement": {}})]))
 
