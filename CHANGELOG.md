@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.6] - 2026-04-10
+
+### Fixed
+- WA355 rule description corrected from "exceeds 5 custom headers" to "exceeds 10
+  custom headers" to match the actual `_MAX_CUSTOM_RESPONSE_HEADERS` constant and
+  AWS WAF limit.
+
+### Changed
+- Linter rule registration is now thread-safe (`threading.Lock`).
+
 ## [0.7.5] - 2026-04-09
 
 ### Fixed

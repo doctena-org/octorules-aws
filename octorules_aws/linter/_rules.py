@@ -143,7 +143,7 @@ WA336 = RuleMeta("WA336", "statement", "JsonBody.InvalidFallbackBehavior invalid
 
 # WA354-WA357: CustomResponse parameter limits
 WA354 = RuleMeta("WA354", "action", "CustomResponse body exceeds 4,096 bytes", Severity.ERROR)
-WA355 = RuleMeta("WA355", "action", "CustomResponse exceeds 5 custom headers", Severity.ERROR)
+WA355 = RuleMeta("WA355", "action", "CustomResponse exceeds 10 custom headers", Severity.ERROR)
 WA356 = RuleMeta("WA356", "action", "CustomResponse header name invalid", Severity.ERROR)
 WA357 = RuleMeta("WA357", "action", "CustomResponseBodyKey is empty", Severity.WARNING)
 
