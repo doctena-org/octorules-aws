@@ -496,6 +496,40 @@ class TestNotStatement:
         }
         assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
 
+    def test_wa311_not_statement_string(self):
+        """NotStatement.Statement that is a string fires WA311."""
+        stmt = {"NotStatement": {"Statement": "invalid"}}
+        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa311_not_statement_list(self):
+        """NotStatement.Statement that is a list fires WA311."""
+        stmt = {"NotStatement": {"Statement": []}}
+        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA322  Non-dict in compound statement
+# ---------------------------------------------------------------------------
+class TestNonDictInCompound:
+    def test_wa322_non_dict_in_and_statement(self):
+        stmt = {"AndStatement": {"Statements": [{"ByteMatchStatement": {}}, "invalid"]}}
+        assert "WA322" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa322_non_dict_in_or_statement(self):
+        stmt = {"OrStatement": {"Statements": [{"ByteMatchStatement": {}}, "invalid"]}}
+        assert "WA322" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa322_all_dicts_ok(self):
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {"ByteMatchStatement": {}},
+                    {"GeoMatchStatement": {}},
+                ]
+            }
+        }
+        assert "WA322" not in _ids(validate_rules([_rule(Statement=stmt)]))
+
 
 # ---------------------------------------------------------------------------
 # WA312  ByteMatchStatement required fields
@@ -2216,6 +2250,33 @@ class TestSearchStringSize:
             }
         }
         assert "WA307" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+
+# ---------------------------------------------------------------------------
+# WA328  Empty SearchString
+# ---------------------------------------------------------------------------
+class TestEmptySearchString:
+    def test_wa328_empty_search_string(self):
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA328" in _ids(validate_rules([_rule(Statement=stmt)]))
+
+    def test_wa328_non_empty_ok(self):
+        stmt = {
+            "ByteMatchStatement": {
+                "SearchString": "test",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "CONTAINS",
+            }
+        }
+        assert "WA328" not in _ids(validate_rules([_rule(Statement=stmt)]))
 
 
 # ---------------------------------------------------------------------------

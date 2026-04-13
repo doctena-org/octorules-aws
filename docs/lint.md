@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **80 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **84 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -70,6 +70,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA159](#wa159--ruleactionoverrides-entry-missing-name-or-actiontouse) | RuleActionOverrides entry missing Name or ActionToUse | ERROR |
 | [WA160](#wa160--ruleactionoverrides-actiontouse-has-invalid-action) | RuleActionOverrides ActionToUse has invalid action | ERROR |
 | [WA161](#wa161--deprecated-excludedrules--use-ruleactionoverrides-instead) | Deprecated ExcludedRules — use RuleActionOverrides instead | INFO |
+| [WA162](#wa162--reservedbogon-ip-in-ip-set) | Reserved/bogon IP in IP set | WARNING |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
 | [WA201](#wa201--invalid-overrideaction-type) | Invalid OverrideAction type | ERROR |
 | [WA300](#wa300--statement-must-have-exactly-one-type) | Statement must have exactly one type | ERROR |
@@ -94,9 +95,11 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA319](#wa319--invalid-regex-pattern-in-regexmatchstatement) | Invalid regex pattern in RegexMatchStatement | ERROR |
 | [WA320](#wa320--fieldtomatch-type-incompatible-with-statement-type) | FieldToMatch type incompatible with statement type | WARNING |
 | [WA321](#wa321--redundant-double-negation-notstatement-wrapping-notstatement) | Redundant double negation (NotStatement wrapping NotStatement) | WARNING |
+| [WA322](#wa322--statement-entry-in-andorstatement-is-not-a-dict) | Statement entry in And/OrStatement is not a dict | ERROR |
 | [WA323](#wa323--geomatchstatement-exceeds-50-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
 | [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
 | [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
+| [WA328](#wa328--bytematchstatement-searchstring-is-empty) | ByteMatchStatement SearchString is empty | ERROR |
 | [WA337](#wa337--invalid-custom-key-type-in-customkeys) | Invalid custom key type in CustomKeys | ERROR |
 | [WA338](#wa338--invalid-oversizehandling-value) | Invalid OversizeHandling value | ERROR |
 | [WA339](#wa339--invalid-fallbackbehavior-value) | Invalid FallbackBehavior value | ERROR |
@@ -129,6 +132,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
 | [WA601](#wa601--total-rule-count-may-exceed-default-web-acl-limit-of-100) | Total rule count may exceed default Web ACL limit of 100 | WARNING |
 | [WA602](#wa602--count-action-on-managedrulegroup-logs-all-traffic) | Count action on ManagedRuleGroup logs all traffic | INFO |
+| [WA603](#wa603--rule-likely-unreachable-after-always-true-terminating-rule) | Rule likely unreachable after always-true terminating rule | WARNING |
 
 ---
 
@@ -139,10 +143,10 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA001-WA005, WA010, WA020-WA024, WA154 | Structure & YAML | 12 |
 | WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA343 | Statement validation | 42 |
+| WA156-WA161, WA300-WA343 | Statement validation | 44 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA326-WA327, WA340, WA500-WA501, WA520 | Cross-rule | 7 |
+| WA158, WA162, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 9 |
 | WA600-WA602 | Best practice | 3 |
 
 ---
@@ -1105,6 +1109,36 @@ A `NotStatement` whose inner `Statement` is itself a `NotStatement` is a redunda
         CountryCodes: ["CN"]
 ```
 
+### WA322 -- Statement entry in And/OrStatement is not a dict
+
+**Severity:** ERROR
+
+Triggers when an `AndStatement` or `OrStatement` contains a `Statements` item that is not a dict (e.g., a string, number, or null).
+
+**Triggers on:**
+
+```yaml
+aws_waf_custom_rules:
+  - ref: bad-compound
+    Priority: 1
+    Action:
+      Block: {}
+    Statement:
+      AndStatement:
+        Statements:
+          - ByteMatchStatement:
+              SearchString: "test"
+              FieldToMatch:
+                QueryString: {}
+              PositionalConstraint: CONTAINS
+              TextTransformations:
+                - Priority: 0
+                  Type: NONE
+          - "not a statement"       # triggers WA322
+```
+
+**Fix:** Ensure every item in `Statements` is a dict containing exactly one statement type key.
+
 ### WA323 -- GeoMatchStatement exceeds 50 country codes
 
 **Severity:** ERROR
@@ -1163,6 +1197,33 @@ The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 
 ```
 
 **Fix:** Reduce the list to 5 or fewer patterns.
+
+### WA328 -- ByteMatchStatement SearchString is empty
+
+**Severity:** ERROR
+
+Triggers when a `ByteMatchStatement` has an empty `SearchString`. An empty search pattern matches nothing and is almost certainly a configuration error.
+
+**Triggers on:**
+
+```yaml
+aws_waf_custom_rules:
+  - ref: empty-search
+    Priority: 1
+    Action:
+      Block: {}
+    Statement:
+      ByteMatchStatement:
+        SearchString: ""         # empty — matches nothing
+        FieldToMatch:
+          QueryString: {}
+        PositionalConstraint: CONTAINS
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Provide a non-empty `SearchString` value.
 
 ### WA337 -- Invalid custom key type in CustomKeys
 
@@ -1854,6 +1915,25 @@ A list in the `lists` section has more than 10,000 items. AWS WAF limits IP sets
 
 **Fix:** Split the list into multiple IP sets, or remove unused entries.
 
+### WA162 -- Reserved/bogon IP in IP set
+
+**Severity:** WARNING
+
+Triggers when an IP set in the `lists` section contains addresses from reserved or bogon ranges (RFC 1918 private, loopback, link-local, CGNAT, documentation, multicast, etc.).
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocked_ips
+    kind: ip
+    items:
+      - 10.0.0.0/8          # RFC 1918 private
+      - 127.0.0.1            # loopback
+```
+
+**Fix:** Use public IP addresses, or suppress the warning if intentionally blocking private ranges.
+
 ### WA340 -- Estimated total WCU exceeds Web ACL limit
 
 **Severity:** WARNING
@@ -2022,6 +2102,42 @@ The total number of rules across all AWS WAF phases in this zone exceeds 100, wh
 A rule with `Action: Count` or `OverrideAction: Count` on a `ManagedRuleGroupStatement` without a `ScopeDownStatement` wrapper logs all traffic through the managed rule group without blocking anything. At the Web ACL level, managed rule groups use `OverrideAction` (not `Action`) to override the group's default behavior. This is usually unintentional — it generates noise in CloudWatch WAF logs and consumes WCU without providing protection.
 
 **Fix:** Either change the action to `Block` for protection, or add a `ScopeDownStatement` to limit which requests are counted.
+
+### WA603 -- Rule likely unreachable after always-true terminating rule
+
+**Severity:** WARNING
+
+Triggers when a rule is preceded by a lower-priority rule that likely matches all traffic (e.g., GeoMatchStatement with 200+ country codes) and has a terminating action (Block, Allow, Captcha, or Challenge). AWS WAF evaluates rules in priority order and stops on the first matching terminating action.
+
+Count actions do not terminate — they log and continue to the next rule.
+
+**Triggers on:**
+
+```yaml
+aws_waf_custom_rules:
+  - ref: catch-all
+    Priority: 0
+    Action:
+      Block: {}
+    Statement:
+      GeoMatchStatement:
+        CountryCodes: [US, CA, GB, ...]  # 200+ countries
+  - ref: specific-rule                    # unreachable
+    Priority: 1
+    Action:
+      Block: {}
+    Statement:
+      ByteMatchStatement:
+        SearchString: "admin"
+        FieldToMatch:
+          UriPath: {}
+        PositionalConstraint: CONTAINS
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Reorder rules so the catch-all rule has a higher priority number, or add a `ScopeDownStatement` to narrow its scope.
 
 ### WA354 -- CustomResponse body exceeds 4,096 bytes
 

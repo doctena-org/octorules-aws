@@ -1,5 +1,6 @@
 """AWS WAF lint plugin -- orchestrates all AWS-specific linter checks."""
 
+import ipaddress
 import json
 from contextvars import ContextVar
 from typing import Any
@@ -12,13 +13,29 @@ from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
 from octorules_aws._statement_util import REGEX_SET_ARN_RE as _REGEX_SET_ARN_RE
 from octorules_aws._statement_util import collect_ipset_arns as _collect_ipset_arns_from_statement
 from octorules_aws._statement_util import collect_regex_set_arns as _collect_regex_set_arns
-from octorules_aws.linter._rules import AWS_RULE_METAS
+from octorules_aws.validate import RULE_IDS as _validate_ids
 from octorules_aws.validate import _estimate_rule_wcu, validate_rules
 
 # Re-export for backward compatibility
 _AWS_PHASE_NAMES = AWS_PHASE_NAMES
 
-AWS_RULE_IDS: frozenset[str] = frozenset(r.rule_id for r in AWS_RULE_METAS)
+# Rule IDs emitted by cross-phase/cross-rule checks in this module.
+_PLUGIN_RULE_IDS: frozenset[str] = frozenset(
+    {
+        "WA024",
+        "WA158",
+        "WA162",
+        "WA326",
+        "WA327",
+        "WA340",
+        "WA501",
+        "WA520",
+        "WA601",
+        "WA603",
+    }
+)
+
+AWS_RULE_IDS: frozenset[str] = _validate_ids | _PLUGIN_RULE_IDS
 
 # Default Web ACL WCU limit.  Override via ``set_wcu_limit()`` for accounts
 # with custom capacity (up to 5000 via AWS support).
@@ -372,6 +389,173 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
             )
 
 
+# Reserved/bogon networks (RFC 1918, loopback, link-local, etc.)
+_RESERVED_NETWORKS: list[tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, str]] = [
+    # IPv4
+    (ipaddress.IPv4Network("10.0.0.0/8"), "RFC 1918 private"),
+    (ipaddress.IPv4Network("172.16.0.0/12"), "RFC 1918 private"),
+    (ipaddress.IPv4Network("192.168.0.0/16"), "RFC 1918 private"),
+    (ipaddress.IPv4Network("127.0.0.0/8"), "loopback"),
+    (ipaddress.IPv4Network("169.254.0.0/16"), "link-local"),
+    (ipaddress.IPv4Network("100.64.0.0/10"), "CGNAT (RFC 6598)"),
+    (ipaddress.IPv4Network("0.0.0.0/8"), "this network"),
+    (ipaddress.IPv4Network("192.0.2.0/24"), "documentation (RFC 5737)"),
+    (ipaddress.IPv4Network("198.51.100.0/24"), "documentation (RFC 5737)"),
+    (ipaddress.IPv4Network("203.0.113.0/24"), "documentation (RFC 5737)"),
+    (ipaddress.IPv4Network("192.0.0.0/24"), "IANA special purpose"),
+    (ipaddress.IPv4Network("192.88.99.0/24"), "6to4 relay anycast"),
+    (ipaddress.IPv4Network("198.18.0.0/15"), "benchmark testing (RFC 2544)"),
+    (ipaddress.IPv4Network("224.0.0.0/4"), "multicast"),
+    (ipaddress.IPv4Network("240.0.0.0/4"), "reserved for future use"),
+    # IPv6
+    (ipaddress.IPv6Network("::/128"), "unspecified"),
+    (ipaddress.IPv6Network("::1/128"), "loopback"),
+    (ipaddress.IPv6Network("::ffff:0:0/96"), "IPv4-mapped"),
+    (ipaddress.IPv6Network("64:ff9b::/96"), "NAT64 (RFC 6052)"),
+    (ipaddress.IPv6Network("100::/64"), "discard (RFC 6666)"),
+    (ipaddress.IPv6Network("2001:db8::/32"), "documentation (RFC 3849)"),
+    (ipaddress.IPv6Network("2001::/23"), "IANA special purpose"),
+    (ipaddress.IPv6Network("2001::/32"), "Teredo"),
+    (ipaddress.IPv6Network("2002::/16"), "6to4"),
+    (ipaddress.IPv6Network("fc00::/7"), "unique local"),
+    (ipaddress.IPv6Network("fe80::/10"), "link-local"),
+    (ipaddress.IPv6Network("ff00::/8"), "multicast"),
+    (ipaddress.IPv6Network("::ffff:0:0:0/96"), "IPv4-translated"),
+]
+
+
+def _check_reserved_ips(ip_str: str) -> str | None:
+    """Return a description if *ip_str* falls within a reserved/bogon range, else None."""
+    try:
+        net = ipaddress.ip_network(ip_str, strict=False)
+    except ValueError:
+        return None
+    for reserved, desc in _RESERVED_NETWORKS:
+        if net.version == reserved.version and net.subnet_of(reserved):
+            return desc
+    return None
+
+
+def _check_list_reserved_ips(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA162: Warn if any IP set item in the lists section is a reserved/bogon address."""
+    lists_section = rules_data.get("lists")
+    if not isinstance(lists_section, list):
+        return
+
+    for lst in lists_section:
+        if not isinstance(lst, dict):
+            continue
+        kind = lst.get("kind")
+        if kind != "ip":
+            continue
+        items = lst.get("items")
+        if not isinstance(items, list):
+            continue
+        name = lst.get("name", "<unknown>")
+        for item in items:
+            item_str = str(item)
+            desc = _check_reserved_ips(item_str)
+            if desc:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA162",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"IP set '{name}' contains reserved/bogon address {item_str!r} ({desc})"
+                        ),
+                        phase="",
+                    )
+                )
+
+
+# Terminating actions — these stop rule evaluation on match.
+# Count is NOT terminating (it logs and continues to the next rule).
+_TERMINATING_ACTIONS = frozenset({"Allow", "Block", "Captcha", "Challenge"})
+
+# Threshold for GeoMatchStatement "likely always true" (matches WA341 heuristic).
+_GEO_ALWAYS_TRUE_THRESHOLD = 200
+
+
+def _is_likely_always_true(rule: dict) -> bool:
+    """Heuristic: does this rule's Statement likely match all traffic?
+
+    Reuses the same heuristic as WA341: GeoMatchStatement with >= 200
+    country codes.  Future heuristics (e.g. IPSet with 0.0.0.0/0) can
+    be added here.
+    """
+    stmt = rule.get("Statement", {})
+    if not isinstance(stmt, dict):
+        return False
+    for stype, inner in stmt.items():
+        if not isinstance(inner, dict):
+            continue
+        if stype == "GeoMatchStatement":
+            codes = inner.get("CountryCodes", [])
+            if isinstance(codes, list) and len(codes) >= _GEO_ALWAYS_TRUE_THRESHOLD:
+                return True
+    return False
+
+
+def _check_unreachable_rules(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA603: Detect rules that are unreachable after a likely-always-true terminating rule.
+
+    AWS WAF evaluates rules in Priority order and stops at the first
+    matching terminating action (Block, Allow, Captcha, Challenge).
+    """
+    for phase_name, rules in rules_data.items():
+        if phase_name not in _AWS_PHASE_NAMES:
+            continue
+        if phase_name not in PHASE_BY_NAME:
+            continue
+        if ctx.phase_filter and phase_name not in ctx.phase_filter:
+            continue
+        if not isinstance(rules, list):
+            continue
+
+        # Sort by Priority (rules without valid priority are skipped)
+        prioritized: list[tuple[int, dict]] = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            pri = rule.get("Priority")
+            if isinstance(pri, int) and not isinstance(pri, bool) and pri >= 0:
+                prioritized.append((pri, rule))
+        prioritized.sort(key=lambda x: x[0])
+
+        found_terminating = False
+        terminating_ref = ""
+        for _pri, rule in prioritized:
+            ref = str(rule.get("ref", ""))
+            enabled = rule.get("enabled", True)
+            if not enabled:
+                continue
+
+            if found_terminating:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA603",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"Rule likely unreachable — preceded by always-true"
+                            f" terminating rule {terminating_ref!r}"
+                        ),
+                        phase=phase_name,
+                        ref=ref,
+                    )
+                )
+                continue
+
+            action = rule.get("Action", {})
+            if isinstance(action, dict):
+                action_type = next(iter(action), "")
+            else:
+                action_type = ""
+
+            if action_type in _TERMINATING_ACTIONS and _is_likely_always_true(rule):
+                found_terminating = True
+                terminating_ref = ref
+
+
 def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """Run all AWS WAF lint checks on a zone rules file."""
     for phase_name, rules in rules_data.items():
@@ -404,3 +588,5 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     _check_ipset_references(rules_data, ctx)
     _check_regex_set_references(rules_data, ctx)
     _check_list_item_counts(rules_data, ctx)
+    _check_list_reserved_ips(rules_data, ctx)
+    _check_unreachable_rules(rules_data, ctx)

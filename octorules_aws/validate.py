@@ -4,6 +4,87 @@ import re
 
 from octorules.linter.engine import LintResult, Severity
 
+# Rule IDs emitted by validate_rules() — kept in sync with _rules.py by
+# test_plugin_rule_ids_match_metas.
+RULE_IDS: frozenset[str] = frozenset(
+    {
+        "WA001",
+        "WA002",
+        "WA003",
+        "WA004",
+        "WA005",
+        "WA010",
+        "WA020",
+        "WA021",
+        "WA022",
+        "WA023",
+        "WA100",
+        "WA101",
+        "WA102",
+        "WA154",
+        "WA156",
+        "WA157",
+        "WA159",
+        "WA160",
+        "WA161",
+        "WA200",
+        "WA201",
+        "WA300",
+        "WA301",
+        "WA302",
+        "WA303",
+        "WA304",
+        "WA305",
+        "WA306",
+        "WA307",
+        "WA308",
+        "WA309",
+        "WA310",
+        "WA311",
+        "WA312",
+        "WA313",
+        "WA314",
+        "WA315",
+        "WA316",
+        "WA317",
+        "WA318",
+        "WA319",
+        "WA320",
+        "WA321",
+        "WA322",
+        "WA323",
+        "WA324",
+        "WA325",
+        "WA328",
+        "WA330",
+        "WA331",
+        "WA332",
+        "WA334",
+        "WA335",
+        "WA336",
+        "WA337",
+        "WA338",
+        "WA339",
+        "WA341",
+        "WA342",
+        "WA343",
+        "WA350",
+        "WA351",
+        "WA352",
+        "WA353",
+        "WA354",
+        "WA355",
+        "WA356",
+        "WA357",
+        "WA400",
+        "WA401",
+        "WA402",
+        "WA500",
+        "WA600",
+        "WA602",
+    }
+)
+
 
 def _result(
     rule_id: str,
@@ -953,13 +1034,11 @@ def _check_rate_based(
                 _result(
                     rule_id="WA303",
                     severity=Severity.ERROR,
-                    message=(
-                        f"RateBasedStatement.EvaluationWindowSec must be one of"
-                        f" {sorted(_VALID_EVALUATION_WINDOW_SECS)}, got {ews!r}"
-                    ),
+                    message=f"Invalid EvaluationWindowSec: {ews!r}",
                     phase=phase,
                     ref=ref,
                     field="Statement.RateBasedStatement.EvaluationWindowSec",
+                    suggestion=f"Valid: {sorted(_VALID_EVALUATION_WINDOW_SECS)}",
                 )
             )
 
@@ -1005,8 +1084,21 @@ def _check_byte_match(
                 )
             )
 
-    # WA307: SearchString size limit
+    # WA328: empty SearchString
     search_string = bms.get("SearchString")
+    if isinstance(search_string, str) and len(search_string) == 0:
+        results.append(
+            _result(
+                rule_id="WA328",
+                severity=Severity.ERROR,
+                message="SearchString must not be empty",
+                phase=phase,
+                ref=ref,
+                field="Statement.ByteMatchStatement.SearchString",
+            )
+        )
+
+    # WA307: SearchString size limit
     if isinstance(search_string, str):
         byte_len = len(search_string.encode("utf-8"))
         if byte_len > _MAX_SEARCH_STRING_BYTES:
@@ -1870,9 +1962,20 @@ def _check_compound(
                 field=f"Statement.{name}.Statements",
             )
         )
-    for s in stmts:
+    for i, s in enumerate(stmts):
         if isinstance(s, dict):
             _validate_statement(s, results, phase, ref, depth + 1)
+        else:
+            results.append(
+                _result(
+                    rule_id="WA322",
+                    severity=Severity.ERROR,
+                    message=f"{name}.Statements[{i}] is not a dict (got {type(s).__name__})",
+                    phase=phase,
+                    ref=ref,
+                    field=f"Statement.{name}.Statements[{i}]",
+                )
+            )
 
 
 def _check_not(
@@ -1912,6 +2015,17 @@ def _check_not(
                 )
             )
         _validate_statement(nested, results, phase, ref, depth + 1)
+    else:
+        results.append(
+            _result(
+                rule_id="WA311",
+                severity=Severity.ERROR,
+                message=f"NotStatement.Statement must be a dict (got {type(nested).__name__})",
+                phase=phase,
+                ref=ref,
+                field="Statement.NotStatement.Statement",
+            )
+        )
 
 
 # --- ARN checks -------------------------------------------------------------

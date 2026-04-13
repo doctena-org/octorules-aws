@@ -83,6 +83,14 @@ WA022 = RuleMeta("WA022", "structure", "Duplicate ref within phase", Severity.ER
 WA023 = RuleMeta("WA023", "structure", "Rule entry is not a dict", Severity.ERROR)
 WA024 = RuleMeta("WA024", "structure", "Phase value is not a list", Severity.ERROR)
 
+# WA322: Non-dict in compound statement
+WA322 = RuleMeta(
+    "WA322", "statement", "Statement entry in And/OrStatement is not a dict", Severity.ERROR
+)
+
+# WA328: Empty SearchString
+WA328 = RuleMeta("WA328", "statement", "ByteMatchStatement SearchString is empty", Severity.ERROR)
+
 # WA323-WA325: Statement limit checks
 WA323 = RuleMeta("WA323", "statement", "GeoMatchStatement exceeds 50 country codes", Severity.ERROR)
 WA324 = RuleMeta(
@@ -155,6 +163,9 @@ WA520 = RuleMeta(
 # WA158: IP set item count limit
 WA158 = RuleMeta("WA158", "cross-rule", "IP set exceeds 10,000 address limit", Severity.WARNING)
 
+# WA162: Reserved/bogon IP in IP set
+WA162 = RuleMeta("WA162", "cross-rule", "Reserved/bogon IP address in IP set", Severity.WARNING)
+
 # WA326: Cross-file ARN reference validation
 WA326 = RuleMeta(
     "WA326",
@@ -214,5 +225,13 @@ WA338 = RuleMeta("WA338", "statement", "Invalid OversizeHandling value", Severit
 
 # WA339: Invalid FallbackBehavior value
 WA339 = RuleMeta("WA339", "statement", "Invalid FallbackBehavior value", Severity.ERROR)
+
+# WA603: Unreachable rule after catch-all
+WA603 = RuleMeta(
+    "WA603",
+    "cross-rule",
+    "Rule likely unreachable after always-true terminating rule",
+    Severity.WARNING,
+)
 
 AWS_RULE_METAS: list[RuleMeta] = [obj for obj in globals().values() if isinstance(obj, RuleMeta)]

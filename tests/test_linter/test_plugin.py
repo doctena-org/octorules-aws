@@ -2,6 +2,7 @@
 
 from octorules.linter.engine import LintContext, Severity
 from octorules.linter.plugin import get_registered_plugins
+from octorules.linter.rules.registry import RULE_REGISTRY
 
 from octorules_aws.linter._plugin import AWS_RULE_IDS, aws_lint
 from octorules_aws.linter._rules import AWS_RULE_METAS
@@ -27,6 +28,15 @@ class TestPluginRegistration:
             f"missing from metas: {AWS_RULE_IDS - meta_ids}, "
             f"missing from plugin: {meta_ids - AWS_RULE_IDS}"
         )
+
+    def test_all_aws_rules_in_registry(self):
+        for rule_id in AWS_RULE_IDS:
+            assert rule_id in RULE_REGISTRY, f"{rule_id} not in global registry"
+
+    def test_unique_rule_ids(self):
+        ids = [r.rule_id for r in AWS_RULE_METAS]
+        dupes = [x for x in ids if ids.count(x) > 1]
+        assert len(ids) == len(set(ids)), f"Duplicate rule IDs: {dupes}"
 
 
 class TestAwsLint:
@@ -927,6 +937,108 @@ class TestListItemCounts:
         assert "bad-set" in wa158[0].message
 
 
+class TestReservedIPInList:
+    """WA162: Reserved/bogon IP address in IP set."""
+
+    def test_wa162_private_rfc1918(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-set", "kind": "ip", "items": ["10.0.0.0/8"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 1
+        assert "RFC 1918 private" in wa162[0].message
+
+    def test_wa162_cgnat(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-set", "kind": "ip", "items": ["100.64.1.0/24"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 1
+        assert "CGNAT" in wa162[0].message
+
+    def test_wa162_documentation_rfc5737(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-set", "kind": "ip", "items": ["192.0.2.0/24"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 1
+        assert "documentation" in wa162[0].message
+
+    def test_wa162_public_ip_ok(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "ok-set", "kind": "ip", "items": ["8.8.8.0/24"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 0
+
+    def test_wa162_multiple_reserved(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "mixed-set",
+                    "kind": "ip",
+                    "items": ["8.8.8.0/24", "10.0.0.0/8", "192.168.1.0/24"],
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 2  # 10.0.0.0/8 and 192.168.1.0/24
+
+    def test_wa162_ipv6_documentation(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "ipv6-set", "kind": "ip", "items": ["2001:db8::/32"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 1
+        assert "documentation" in wa162[0].message
+
+    def test_wa162_non_ip_list_skipped(self):
+        """Non-IP lists (e.g., regex) should not be checked."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "regex-set", "kind": "regex", "items": ["^foo.*"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 0
+
+    def test_wa162_invalid_ip_skipped(self):
+        """Invalid IP strings should not trigger WA162 (handled elsewhere)."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "bad-set", "kind": "ip", "items": ["not-an-ip"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 0
+
+
 class TestRuleCount:
     """WA601: Total rule count may exceed default Web ACL limit of 100."""
 
@@ -1030,3 +1142,107 @@ class TestRuleCount:
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
+
+
+class TestWA603Unreachable:
+    """WA603: Rule unreachable after likely-always-true terminating rule."""
+
+    @staticmethod
+    def _geo_catch_all(ref: str, action: str = "Block", *, priority: int = 0):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {action: {}},
+            "Statement": {
+                "GeoMatchStatement": {
+                    "CountryCodes": [f"X{i:02d}" for i in range(200)],
+                }
+            },
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": ref,
+            },
+        }
+
+    @staticmethod
+    def _normal_rule(ref: str, *, priority: int = 1):
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {"Block": {}},
+            "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
+            "VisibilityConfig": {
+                "SampledRequestsEnabled": True,
+                "CloudWatchMetricsEnabled": True,
+                "MetricName": ref,
+            },
+        }
+
+    def test_wa603_unreachable_after_catch_all_block(self):
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._geo_catch_all("catch-all", priority=0),
+                self._normal_rule("after", priority=1),
+            ]
+        }
+        aws_lint(rules_data, ctx)
+        wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
+        assert len(wa603) == 1
+        assert wa603[0].ref == "after"
+
+    def test_wa603_no_flag_for_count_action(self):
+        """Count doesn't terminate — subsequent rules should NOT be flagged."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._geo_catch_all("counter", action="Count", priority=0),
+                self._normal_rule("after", priority=1),
+            ]
+        }
+        aws_lint(rules_data, ctx)
+        wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
+        assert len(wa603) == 0
+
+    def test_wa603_no_flag_for_normal_rule(self):
+        """A rule with few country codes is not catch-all."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._normal_rule("first", priority=0),
+                self._normal_rule("second", priority=1),
+            ]
+        }
+        aws_lint(rules_data, ctx)
+        wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
+        assert len(wa603) == 0
+
+    def test_wa603_disabled_catch_all_no_flag(self):
+        """Disabled catch-all should not make subsequent rules unreachable."""
+        ctx = LintContext()
+        catch_all = self._geo_catch_all("disabled", priority=0)
+        catch_all["enabled"] = False
+        rules_data = {
+            "aws_waf_custom_rules": [
+                catch_all,
+                self._normal_rule("after", priority=1),
+            ]
+        }
+        aws_lint(rules_data, ctx)
+        wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
+        assert len(wa603) == 0
+
+    def test_wa603_multiple_unreachable(self):
+        """Multiple rules after catch-all should all be flagged."""
+        ctx = LintContext()
+        rules_data = {
+            "aws_waf_custom_rules": [
+                self._geo_catch_all("catch-all", priority=0),
+                self._normal_rule("after1", priority=1),
+                self._normal_rule("after2", priority=2),
+            ]
+        }
+        aws_lint(rules_data, ctx)
+        wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
+        assert len(wa603) == 2

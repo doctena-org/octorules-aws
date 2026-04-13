@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.7] - 2026-04-13
+
+### Added
+- WA162: Reserved/bogon IP address in IP set (WARNING).
+- WA322: Non-dict entry in And/OrStatement Statements list (ERROR).
+- WA328: Empty ByteMatchStatement SearchString (ERROR).
+- WA603: Rule likely unreachable after always-true terminating rule (WARNING).
+
+### Changed
+- WA303: Valid options moved to `suggestion` field.
+- WA311: Now also flags non-dict (non-None) NotStatement.Statement values.
+- Explicit `RULE_IDS` per validator module for dead-rule detection.
+- Reserved IP list expanded to 28 networks (RFC 1918, CGNAT, documentation,
+  multicast, etc.).
+
 ## [0.7.6] - 2026-04-10
 
 ### Fixed
