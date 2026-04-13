@@ -35,7 +35,7 @@ WA309 = RuleMeta(
     Severity.WARNING,
 )
 WA310 = RuleMeta(
-    "WA310", "statement", "And/OrStatement must have at least 2 nested statements", Severity.ERROR
+    "WA310", "statement", "And/OrStatement must have 2-10 nested statements", Severity.ERROR
 )
 WA311 = RuleMeta(
     "WA311", "statement", "NotStatement missing required 'Statement' field", Severity.ERROR

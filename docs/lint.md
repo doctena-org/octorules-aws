@@ -62,7 +62,11 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA024](#wa024--phase-value-is-not-a-list) | Phase value is not a list | ERROR |
 | [WA100](#wa100--priority-must-be-a-non-negative-integer) | Priority must be a non-negative integer | ERROR |
 | [WA101](#wa101--duplicate-priority-across-rules) | Duplicate Priority across rules | ERROR |
+| [WA102](#wa102--non-contiguous-rule-priorities) | Non-contiguous rule priorities | INFO |
+| [WA154](#wa154--rulelabels-uses-reserved-namespace) | RuleLabels uses reserved aws:/awswaf: namespace | ERROR |
+| [WA156](#wa156--managedrulegroupstatement-version-not-pinned) | ManagedRuleGroupStatement version not pinned | WARNING |
 | [WA157](#wa157--excludedrules-must-be-a-list-of-dicts-with-name) | ExcludedRules must be a list of dicts with Name | ERROR |
+| [WA158](#wa158--ip-set-exceeds-10000-address-limit) | IP set exceeds 10,000 address limit | WARNING |
 | [WA159](#wa159--ruleactionoverrides-entry-missing-name-or-actiontouse) | RuleActionOverrides entry missing Name or ActionToUse | ERROR |
 | [WA160](#wa160--ruleactionoverrides-actiontouse-has-invalid-action) | RuleActionOverrides ActionToUse has invalid action | ERROR |
 | [WA161](#wa161--deprecated-excludedrules--use-ruleactionoverrides-instead) | Deprecated ExcludedRules — use RuleActionOverrides instead | INFO |
@@ -90,7 +94,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA319](#wa319--invalid-regex-pattern-in-regexmatchstatement) | Invalid regex pattern in RegexMatchStatement | ERROR |
 | [WA320](#wa320--fieldtomatch-type-incompatible-with-statement-type) | FieldToMatch type incompatible with statement type | WARNING |
 | [WA321](#wa321--redundant-double-negation-notstatement-wrapping-notstatement) | Redundant double negation (NotStatement wrapping NotStatement) | WARNING |
-| [WA323](#wa323--geomatchstatement-exceeds-25-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
+| [WA323](#wa323--geomatchstatement-exceeds-50-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
 | [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
 | [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
 | [WA337](#wa337--invalid-custom-key-type-in-customkeys) | Invalid custom key type in CustomKeys | ERROR |
@@ -108,7 +112,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA353](#wa353--customresponse-status-code-invalid) | CustomResponse status code invalid | ERROR |
 | [WA354](#wa354--customresponse-body-exceeds-4096-bytes) | CustomResponse body exceeds 4,096 bytes | ERROR |
 | [WA355](#wa355--customresponse-exceeds-10-custom-headers) | CustomResponse exceeds 10 custom headers | ERROR |
-| [WA356](#wa356--customresponse-header-name-invalid) | CustomResponse header name invalid (RFC 7230) | ERROR |
+| [WA356](#wa356--customresponse-header-name-invalid) | CustomResponse header name invalid | ERROR |
 | [WA357](#wa357--customresponsebodykey-is-empty) | CustomResponseBodyKey is empty | WARNING |
 | [WA400](#wa400--visibilityconfig-missing-required-field) | VisibilityConfig missing required field | ERROR |
 | [WA401](#wa401--visibilityconfig-field-wrong-type) | VisibilityConfig field wrong type | ERROR |
@@ -699,14 +703,14 @@ The `Limit` value exceeds the AWS WAF maximum of 2,000,000,000 requests per 5-mi
 
 **Severity:** ERROR
 
-The `SearchString` in a `ByteMatchStatement` must not exceed 8,192 bytes when encoded as UTF-8. AWS WAF rejects longer values at the API level.
+The `SearchString` in a `ByteMatchStatement` must not exceed 200 bytes when encoded as UTF-8. AWS WAF rejects longer values at the API level.
 
 **Triggers on:**
 
 ```yaml
     Statement:
       ByteMatchStatement:
-        SearchString: "<very long string exceeding 8192 bytes>"
+        SearchString: "<very long string exceeding 200 bytes>"
         FieldToMatch:
           UriPath: {}
         TextTransformations:
@@ -715,9 +719,9 @@ The `SearchString` in a `ByteMatchStatement` must not exceed 8,192 bytes when en
         PositionalConstraint: CONTAINS
 ```
 
-**Fix:** Shorten the `SearchString` to fit within 8,192 bytes. For multi-byte characters (e.g., accented letters, emoji), note that the byte count may exceed the character count.
+**Fix:** Shorten the `SearchString` to fit within 200 bytes. For multi-byte characters (e.g., accented letters, emoji), note that the byte count may exceed the character count.
 
-> **Note:** The limit is measured in bytes (UTF-8), not characters. A string of 8,192 ASCII characters is exactly at the limit, but 4,097 two-byte characters (8,194 bytes) exceeds it.
+> **Note:** The limit is measured in bytes (UTF-8), not characters. A string of 200 ASCII characters is exactly at the limit, but 101 two-byte characters (202 bytes) exceeds it.
 
 ### WA308 -- RegexString exceeds 512-byte limit
 
@@ -1105,17 +1109,17 @@ A `NotStatement` whose inner `Statement` is itself a `NotStatement` is a redunda
 
 **Severity:** ERROR
 
-The `CountryCodes` list in a `GeoMatchStatement` must not exceed 25 entries. AWS WAF enforces this limit at the API level.
+The `CountryCodes` list in a `GeoMatchStatement` must not exceed 50 entries. AWS WAF enforces this limit at the API level.
 
 **Triggers on:**
 
 ```yaml
     Statement:
       GeoMatchStatement:
-        CountryCodes: ["US", "DE", "FR", "GB", "JP", "CN", "RU", "BR", "IN", "AU", "CA", "MX", "KR", "IT", "ES", "NL", "SE", "NO", "DK", "FI", "PL", "CZ", "AT", "CH", "BE", "IE"]
+        CountryCodes: ["US", "DE", "FR", "GB", "JP", "CN", "RU", "BR", "IN", "AU", "CA", "MX", "KR", "IT", "ES", "NL", "SE", "NO", "DK", "FI", "PL", "CZ", "AT", "CH", "BE", "IE", "PT", "GR", "HU", "RO", "BG", "HR", "SK", "SI", "LT", "LV", "EE", "CY", "MT", "LU", "IS", "LI", "TR", "UA", "GE", "AM", "AZ", "KZ", "UZ", "TM", "TJ"]
 ```
 
-**Fix:** Reduce the list to 25 or fewer country codes. If you need to match more countries, use an `OrStatement` with multiple `GeoMatchStatement` blocks.
+**Fix:** Reduce the list to 50 or fewer country codes. If you need to match more countries, use an `OrStatement` with multiple `GeoMatchStatement` blocks.
 
 ### WA324 -- RateBasedStatement.CustomKeys exceeds maximum of 5
 

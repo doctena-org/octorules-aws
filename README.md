@@ -107,7 +107,7 @@ custom_rulesets:
     phase: aws_waf_custom
     rules:
       - ref: block-bad-ips
-        action:
+        Action:
           Block: {}
         Statement:
           IPSetReferenceStatement:
@@ -129,7 +129,7 @@ custom_rulesets:
     phase: aws_waf_custom
     rules:
       - ref: block-scanner
-        action:
+        Action:
           Block: {}
         Statement:
           ByteMatchStatement:
@@ -227,4 +227,4 @@ ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+octorules-aws is licensed under the [Apache License 2.0](LICENSE).
