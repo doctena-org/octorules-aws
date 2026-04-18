@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.8] - 2026-04-18
+
+### Added
+- **WA163** (cross-rule, WARNING): catch-all CIDR (``0.0.0.0/0`` or
+  ``::/0``) in an IP set. Parallels GA306 (Google) and AZ322 (Azure).
+- **WA164** (cross-rule, WARNING): overlapping IP/CIDR entries within
+  a single IP set. Uses an O(n log n) sweep-line algorithm; 1,000-entry
+  IP sets lint in well under a second.
+
+### Changed
+- Minimum ``octorules`` dependency: ``>=0.26.0`` (was ``>=0.24.0``).
+
 ## [0.7.7] - 2026-04-13
 
 ### Added

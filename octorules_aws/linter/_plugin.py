@@ -2,11 +2,13 @@
 
 import ipaddress
 import json
+from collections.abc import Iterable
 from contextvars import ContextVar
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
 from octorules.phases import PHASE_BY_NAME
+from octorules.reserved_ips import is_reserved
 
 from octorules_aws import AWS_PHASE_NAMES
 from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
@@ -25,6 +27,8 @@ _PLUGIN_RULE_IDS: frozenset[str] = frozenset(
         "WA024",
         "WA158",
         "WA162",
+        "WA163",
+        "WA164",
         "WA326",
         "WA327",
         "WA340",
@@ -34,6 +38,8 @@ _PLUGIN_RULE_IDS: frozenset[str] = frozenset(
         "WA603",
     }
 )
+
+_CATCH_ALL_CIDRS = frozenset({"0.0.0.0/0", "::/0"})
 
 AWS_RULE_IDS: frozenset[str] = _validate_ids | _PLUGIN_RULE_IDS
 
@@ -389,72 +395,34 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
             )
 
 
-# Reserved/bogon networks (RFC 1918, loopback, link-local, etc.)
-_RESERVED_NETWORKS: list[tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, str]] = [
-    # IPv4
-    (ipaddress.IPv4Network("10.0.0.0/8"), "RFC 1918 private"),
-    (ipaddress.IPv4Network("172.16.0.0/12"), "RFC 1918 private"),
-    (ipaddress.IPv4Network("192.168.0.0/16"), "RFC 1918 private"),
-    (ipaddress.IPv4Network("127.0.0.0/8"), "loopback"),
-    (ipaddress.IPv4Network("169.254.0.0/16"), "link-local"),
-    (ipaddress.IPv4Network("100.64.0.0/10"), "CGNAT (RFC 6598)"),
-    (ipaddress.IPv4Network("0.0.0.0/8"), "this network"),
-    (ipaddress.IPv4Network("192.0.2.0/24"), "documentation (RFC 5737)"),
-    (ipaddress.IPv4Network("198.51.100.0/24"), "documentation (RFC 5737)"),
-    (ipaddress.IPv4Network("203.0.113.0/24"), "documentation (RFC 5737)"),
-    (ipaddress.IPv4Network("192.0.0.0/24"), "IANA special purpose"),
-    (ipaddress.IPv4Network("192.88.99.0/24"), "6to4 relay anycast"),
-    (ipaddress.IPv4Network("198.18.0.0/15"), "benchmark testing (RFC 2544)"),
-    (ipaddress.IPv4Network("224.0.0.0/4"), "multicast"),
-    (ipaddress.IPv4Network("240.0.0.0/4"), "reserved for future use"),
-    # IPv6
-    (ipaddress.IPv6Network("::/128"), "unspecified"),
-    (ipaddress.IPv6Network("::1/128"), "loopback"),
-    (ipaddress.IPv6Network("::ffff:0:0/96"), "IPv4-mapped"),
-    (ipaddress.IPv6Network("64:ff9b::/96"), "NAT64 (RFC 6052)"),
-    (ipaddress.IPv6Network("100::/64"), "discard (RFC 6666)"),
-    (ipaddress.IPv6Network("2001:db8::/32"), "documentation (RFC 3849)"),
-    (ipaddress.IPv6Network("2001::/23"), "IANA special purpose"),
-    (ipaddress.IPv6Network("2001::/32"), "Teredo"),
-    (ipaddress.IPv6Network("2002::/16"), "6to4"),
-    (ipaddress.IPv6Network("fc00::/7"), "unique local"),
-    (ipaddress.IPv6Network("fe80::/10"), "link-local"),
-    (ipaddress.IPv6Network("ff00::/8"), "multicast"),
-    (ipaddress.IPv6Network("::ffff:0:0:0/96"), "IPv4-translated"),
-]
+# Reserved/bogon network detection is provided by octorules.reserved_ips
+# (single source of truth across providers; see core v0.26.0).
 
 
-def _check_reserved_ips(ip_str: str) -> str | None:
-    """Return a description if *ip_str* falls within a reserved/bogon range, else None."""
-    try:
-        net = ipaddress.ip_network(ip_str, strict=False)
-    except ValueError:
-        return None
-    for reserved, desc in _RESERVED_NETWORKS:
-        if net.version == reserved.version and net.subnet_of(reserved):
-            return desc
-    return None
-
-
-def _check_list_reserved_ips(rules_data: dict[str, Any], ctx: LintContext) -> None:
-    """WA162: Warn if any IP set item in the lists section is a reserved/bogon address."""
+def _iter_ip_lists(
+    rules_data: dict[str, Any],
+) -> Iterable[tuple[str, list]]:
+    """Yield (name, items) for each IP kind entry under ``lists``."""
     lists_section = rules_data.get("lists")
     if not isinstance(lists_section, list):
         return
-
     for lst in lists_section:
         if not isinstance(lst, dict):
             continue
-        kind = lst.get("kind")
-        if kind != "ip":
+        if lst.get("kind") != "ip":
             continue
         items = lst.get("items")
         if not isinstance(items, list):
             continue
-        name = lst.get("name", "<unknown>")
+        yield lst.get("name", "<unknown>"), items
+
+
+def _check_list_reserved_ips(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA162: Warn if any IP set item in the lists section is a reserved/bogon address."""
+    for name, items in _iter_ip_lists(rules_data):
         for item in items:
             item_str = str(item)
-            desc = _check_reserved_ips(item_str)
+            desc = is_reserved(item_str)
             if desc:
                 ctx.add(
                     LintResult(
@@ -466,6 +434,78 @@ def _check_list_reserved_ips(rules_data: dict[str, Any], ctx: LintContext) -> No
                         phase="",
                     )
                 )
+
+
+def _check_list_catch_all(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA163: Warn if an IP set contains a catch-all CIDR (0.0.0.0/0 or ::/0)."""
+    for name, items in _iter_ip_lists(rules_data):
+        for item in items:
+            item_str = str(item).strip()
+            if item_str in _CATCH_ALL_CIDRS:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA163",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"IP set '{name}' contains catch-all CIDR {item_str!r}"
+                            " which matches every address"
+                        ),
+                        phase="",
+                    )
+                )
+
+
+def _check_list_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> None:
+    """WA164: Detect overlapping IP/CIDR entries within a single IP set.
+
+    Uses a sweep-line algorithm (O(n log n)) — ported from CF478 in
+    octorules-cloudflare v0.7.8.  Large IPSets (AWS allows up to 10,000
+    entries per set) need efficient overlap detection to keep lint fast.
+    """
+
+    def _sweep(
+        name: str,
+        items: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]],
+    ) -> None:
+        # Sort by network address ascending, then prefix length ascending
+        # (broadest first when addresses are equal).
+        sorted_items = sorted(items, key=lambda x: (int(x[1].network_address), x[1].prefixlen))
+        active: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+        for val, net in sorted_items:
+            while active and int(active[-1][1].broadcast_address) < int(net.network_address):
+                active.pop()
+            if active:
+                parent_val, _parent_net = active[-1]
+                if val != parent_val:
+                    ctx.add(
+                        LintResult(
+                            rule_id="WA164",
+                            severity=Severity.WARNING,
+                            message=(
+                                f"IP set '{name}' has overlapping entries:"
+                                f" {val!r} overlaps with {parent_val!r}"
+                            ),
+                            phase="",
+                        )
+                    )
+            active.append((val, net))
+
+    for name, items in _iter_ip_lists(rules_data):
+        v4: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+        v6: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+        for item in items:
+            item_str = str(item).strip()
+            if not item_str or item_str in _CATCH_ALL_CIDRS:
+                # Catch-all is handled by WA163; bare 0/0 would dominate every
+                # other entry and produce overlap noise.  Skip it here.
+                continue
+            try:
+                net = ipaddress.ip_network(item_str, strict=False)
+            except ValueError:
+                continue  # syntactic errors are WA020's concern
+            (v4 if net.version == 4 else v6).append((item_str, net))
+        _sweep(name, v4)
+        _sweep(name, v6)
 
 
 # Terminating actions — these stop rule evaluation on match.
@@ -589,4 +629,6 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     _check_regex_set_references(rules_data, ctx)
     _check_list_item_counts(rules_data, ctx)
     _check_list_reserved_ips(rules_data, ctx)
+    _check_list_catch_all(rules_data, ctx)
+    _check_list_ipset_overlap(rules_data, ctx)
     _check_unreachable_rules(rules_data, ctx)

@@ -1039,6 +1039,151 @@ class TestReservedIPInList:
         assert len(wa162) == 0
 
 
+class TestCatchAllInList:
+    """WA163: Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set."""
+
+    def test_wa163_ipv4_catch_all(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "catch-all-set", "kind": "ip", "items": ["0.0.0.0/0"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa163 = [r for r in ctx.results if r.rule_id == "WA163"]
+        assert len(wa163) == 1
+        assert "catch-all" in wa163[0].message
+
+    def test_wa163_ipv6_catch_all(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "catch-all-v6", "kind": "ip", "items": ["::/0"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa163 = [r for r in ctx.results if r.rule_id == "WA163"]
+        assert len(wa163) == 1
+
+    def test_wa163_non_catch_all_not_flagged(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "ok-set", "kind": "ip", "items": ["10.0.0.0/8", "8.8.8.0/24"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa163 = [r for r in ctx.results if r.rule_id == "WA163"]
+        assert len(wa163) == 0
+
+    def test_wa163_mixed_catch_all_and_others(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "mixed",
+                    "kind": "ip",
+                    "items": ["0.0.0.0/0", "8.8.8.0/24", "::/0"],
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa163 = [r for r in ctx.results if r.rule_id == "WA163"]
+        assert len(wa163) == 2
+
+
+class TestIPSetOverlap:
+    """WA164: Overlapping IP/CIDR entries within a single IP set."""
+
+    def test_wa164_subnet_of_a_broader_entry(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "overlap",
+                    "kind": "ip",
+                    "items": ["10.0.0.0/8", "10.1.0.0/16"],
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        assert len(wa164) == 1
+        assert "10.1.0.0/16" in wa164[0].message
+        assert "10.0.0.0/8" in wa164[0].message
+
+    def test_wa164_no_overlap(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "disjoint",
+                    "kind": "ip",
+                    "items": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        assert len(wa164) == 0
+
+    def test_wa164_ipv6_overlap(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "v6", "kind": "ip", "items": ["fc00::/7", "fc00::/8"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        assert len(wa164) == 1
+
+    def test_wa164_ignores_catch_all(self):
+        # 0.0.0.0/0 would nominally "overlap" every entry — handled by
+        # WA163 separately. WA164 must skip it to avoid spam.
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "with-catch-all",
+                    "kind": "ip",
+                    "items": ["0.0.0.0/0", "10.0.0.0/8", "192.168.0.0/16"],
+                },
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        assert len(wa164) == 0
+
+    def test_wa164_duplicates_suppressed(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "dup", "kind": "ip", "items": ["10.0.0.0/8", "10.0.0.0/8"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        # Exact duplicates are left to a future dedup rule; overlap between
+        # identical entries is not flagged (matches CF478 behaviour).
+        assert len(wa164) == 0
+
+    def test_wa164_sweep_line_fast_on_large_input(self):
+        # 1_000 disjoint /32s should complete well under a second on the
+        # O(n log n) sweep-line algorithm. The original brute-force check
+        # was O(n²) and took multiple seconds at 10k entries (CF478 was
+        # rewritten for exactly this reason).
+        items = [f"203.0.{i // 256}.{i % 256}/32" for i in range(1000)]
+        ctx = LintContext()
+        rules_data = {"lists": [{"name": "big", "kind": "ip", "items": items}]}
+        import time
+
+        start = time.monotonic()
+        aws_lint(rules_data, ctx)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, f"sweep-line too slow: {elapsed:.2f}s for 1000 items"
+
+
 class TestRuleCount:
     """WA601: Total rule count may exceed default Web ACL limit of 100."""
 

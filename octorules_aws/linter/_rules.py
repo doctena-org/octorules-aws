@@ -166,6 +166,14 @@ WA158 = RuleMeta("WA158", "cross-rule", "IP set exceeds 10,000 address limit", S
 # WA162: Reserved/bogon IP in IP set
 WA162 = RuleMeta("WA162", "cross-rule", "Reserved/bogon IP address in IP set", Severity.WARNING)
 
+# WA163: Catch-all CIDR in IP set
+WA163 = RuleMeta(
+    "WA163", "cross-rule", "Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set", Severity.WARNING
+)
+
+# WA164: Overlapping IP/CIDR entries within a single IP set
+WA164 = RuleMeta("WA164", "cross-rule", "Overlapping IP/CIDR entries in IP set", Severity.WARNING)
+
 # WA326: Cross-file ARN reference validation
 WA326 = RuleMeta(
     "WA326",

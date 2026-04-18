@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **84 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **86 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -71,6 +71,8 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA160](#wa160--ruleactionoverrides-actiontouse-has-invalid-action) | RuleActionOverrides ActionToUse has invalid action | ERROR |
 | [WA161](#wa161--deprecated-excludedrules--use-ruleactionoverrides-instead) | Deprecated ExcludedRules — use RuleActionOverrides instead | INFO |
 | [WA162](#wa162--reservedbogon-ip-in-ip-set) | Reserved/bogon IP in IP set | WARNING |
+| [WA163](#wa163--catch-all-cidr-in-ip-set) | Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set | WARNING |
+| [WA164](#wa164--overlapping-ipcidr-entries-in-ip-set) | Overlapping IP/CIDR entries in IP set | WARNING |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
 | [WA201](#wa201--invalid-overrideaction-type) | Invalid OverrideAction type | ERROR |
 | [WA300](#wa300--statement-must-have-exactly-one-type) | Statement must have exactly one type | ERROR |
@@ -146,7 +148,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA156-WA161, WA300-WA343 | Statement validation | 44 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA162, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 9 |
+| WA158, WA162-WA164, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 11 |
 | WA600-WA602 | Best practice | 3 |
 
 ---
@@ -1933,6 +1935,46 @@ lists:
 ```
 
 **Fix:** Use public IP addresses, or suppress the warning if intentionally blocking private ranges.
+
+### WA163 -- Catch-all CIDR in IP set
+
+**Severity:** WARNING
+
+Triggers when an IP set contains `0.0.0.0/0` or `::/0`. Those CIDRs match every address, so blocking against them takes the entire internet down rather than a targeted set. The usual cause is a placeholder the author forgot to replace.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocklist
+    kind: ip
+    items:
+      - 0.0.0.0/0           # <-- blocks everything
+      - 192.168.1.0/24
+```
+
+**Fix:** Replace the catch-all entry with specific CIDRs, or remove it if the intent is to deny all traffic reaching the IPSetReferenceStatement (in which case the statement itself is superfluous — drop the rule).
+
+### WA164 -- Overlapping IP/CIDR entries in IP set
+
+**Severity:** WARNING
+
+Triggers when two entries in the same IP set overlap — one CIDR contains the other. The narrower entry is redundant because the broader one already matches every address it would. Catch-all entries (`0.0.0.0/0`, `::/0`) are handled by WA163 and excluded here to avoid noise.
+
+Uses a sweep-line algorithm (O(n log n)) so 1,000-entry IP sets lint in well under a second.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocked_ips
+    kind: ip
+    items:
+      - 10.0.0.0/8          # broader
+      - 10.1.0.0/16         # <-- redundant, already covered by 10.0.0.0/8
+```
+
+**Fix:** Remove the narrower CIDR (the broader one already matches it), or split the IPSet into multiple sets with distinct ranges if the entries came from different sources.
 
 ### WA340 -- Estimated total WCU exceeds Web ACL limit
 
