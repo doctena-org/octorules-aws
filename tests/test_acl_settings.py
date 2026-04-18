@@ -441,7 +441,7 @@ class TestPrefetchHook:
         assert result is None
 
     def test_fetches_current_settings(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Block": {}}}
 
@@ -449,7 +449,7 @@ class TestPrefetchHook:
         assert result == ({"DefaultAction": {"Allow": {}}}, desired)
 
     def test_handles_provider_error(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderError("fail")
         desired = {"DefaultAction": {"Block": {}}}
 
@@ -457,7 +457,7 @@ class TestPrefetchHook:
         assert result == ({}, desired)
 
     def test_reraises_auth_error(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderAuthError("denied")
 
         with pytest.raises(ProviderAuthError):
@@ -469,7 +469,7 @@ class TestPrefetchHook:
 class TestFinalizeHook:
     def test_noop_when_ctx_none(self):
         zp = MagicMock()
-        _finalize_acl_settings(zp, {}, _zs(), MagicMock(), None)
+        _finalize_acl_settings(zp, {}, _zs(), MagicMock(spec=AwsWafProvider), None)
         # No exception, no changes
 
     def test_adds_plan_when_changes_exist(self):
@@ -477,7 +477,7 @@ class TestFinalizeHook:
         zp.extension_plans = {}
         current = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Block": {}}}
-        _finalize_acl_settings(zp, {}, _zs(), MagicMock(), (current, desired))
+        _finalize_acl_settings(zp, {}, _zs(), MagicMock(spec=AwsWafProvider), (current, desired))
         assert "aws_waf_settings" in zp.extension_plans
         assert len(zp.extension_plans["aws_waf_settings"]) == 1
 
@@ -486,13 +486,13 @@ class TestFinalizeHook:
         zp.extension_plans = {}
         current = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Allow": {}}}
-        _finalize_acl_settings(zp, {}, _zs(), MagicMock(), (current, desired))
+        _finalize_acl_settings(zp, {}, _zs(), MagicMock(spec=AwsWafProvider), (current, desired))
         assert "aws_waf_settings" not in zp.extension_plans
 
 
 class TestApplyHook:
     def test_applies_changes(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         plan = AclSettingsPlan(
             changes=[AclSettingsChange("DefaultAction", {"Allow": {}}, {"Block": {}})]
         )
@@ -504,7 +504,7 @@ class TestApplyHook:
         )
 
     def test_skips_no_change_plan(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         plan = AclSettingsPlan()
         synced, _ = _apply_acl_settings(MagicMock(), [plan], _zs(), provider)
         assert synced == []
@@ -513,25 +513,25 @@ class TestApplyHook:
 
 class TestDumpHook:
     def test_dumps_settings(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {"DefaultAction": {"Allow": {}}}
         result = _dump_acl_settings(_zs(), provider, "/tmp")
         assert result == {"aws_waf_settings": {"DefaultAction": {"Allow": {}}}}
 
     def test_returns_none_on_error(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderError("fail")
         result = _dump_acl_settings(_zs(), provider, "/tmp")
         assert result is None
 
     def test_returns_none_on_empty(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {}
         result = _dump_acl_settings(_zs(), provider, "/tmp")
         assert result is None
 
     def test_reraises_auth_error(self):
-        provider = MagicMock()
+        provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderAuthError("denied")
         with pytest.raises(ProviderAuthError):
             _dump_acl_settings(_zs(), provider, "/tmp")

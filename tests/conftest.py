@@ -7,7 +7,14 @@ import pytest
 
 @pytest.fixture
 def mock_waf_client():
-    """Create a mock boto3 wafv2 client."""
+    """Create a mock boto3 wafv2 client.
+
+    Not spec'd against ``botocore.client.BaseClient`` — boto3 clients
+    are dynamically generated at runtime so a BaseClient spec blocks
+    the very WAFv2 methods tests need to mock (``list_regex_pattern_sets``,
+    ``list_web_acls``, etc.).  A proper spec would require instantiating
+    a real client (which we don't do in unit tests).
+    """
     client = MagicMock()
     # Default to empty regex pattern set list so IP-Set-only tests
     # don't fail when list_lists/get_all_lists calls both APIs.
