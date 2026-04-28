@@ -2,6 +2,7 @@
 
 import pytest
 from octorules.linter.engine import LintResult
+from octorules.testing.lint import assert_lint, assert_no_lint
 
 from octorules_aws.validate import validate_rules
 
@@ -30,41 +31,37 @@ def _rule(**overrides):
     return base
 
 
-def _ids(results: list[LintResult]) -> list[str]:
-    return [r.rule_id for r in results]
-
-
 # ---------------------------------------------------------------------------
 # WA023: Rule entry is not a dict
 # ---------------------------------------------------------------------------
 class TestWA023RuleEntryNotDict:
     def test_string_entry(self):
         results = validate_rules(["not-a-dict"], phase="aws_waf_custom_rules")
-        assert "WA023" in _ids(results)
+        assert_lint(results, "WA023")
 
     def test_int_entry(self):
         results = validate_rules([42], phase="aws_waf_custom_rules")
-        assert "WA023" in _ids(results)
+        assert_lint(results, "WA023")
 
     def test_none_entry(self):
         results = validate_rules([None], phase="aws_waf_custom_rules")
-        assert "WA023" in _ids(results)
+        assert_lint(results, "WA023")
 
     def test_list_entry(self):
         results = validate_rules([[1, 2]], phase="aws_waf_custom_rules")
-        assert "WA023" in _ids(results)
+        assert_lint(results, "WA023")
 
     def test_mixed_valid_and_invalid(self):
         """Non-dict entries produce WA023; valid dicts are still checked."""
         results = validate_rules(["bad", _rule()], phase="aws_waf_custom_rules")
-        assert "WA023" in _ids(results)
+        assert_lint(results, "WA023")
         # The valid rule should NOT produce WA023
-        assert _ids(results).count("WA023") == 1
+        assert_lint(results, "WA023", count=1)
 
     def test_non_dict_skips_remaining_checks(self):
         """A non-dict entry should not trigger WA001/WA002/etc."""
         results = validate_rules(["bad"], phase="aws_waf_custom_rules")
-        ids = _ids(results)
+        ids = [r.rule_id for r in results]
         assert "WA023" in ids
         assert "WA001" not in ids
         assert "WA002" not in ids
@@ -100,10 +97,10 @@ class TestMissingRef:
     def test_wa001_missing_ref(self):
         r = _rule()
         del r["ref"]
-        assert "WA001" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA001")
 
     def test_wa001_empty_ref(self):
-        assert "WA001" in _ids(validate_rules([_rule(ref="")]))
+        assert_lint(validate_rules([_rule(ref="")]), "WA001")
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +109,11 @@ class TestMissingRef:
 class TestDuplicateRef:
     def test_wa022_duplicate_ref(self):
         rules = [_rule(ref="dup"), _rule(ref="dup")]
-        assert "WA022" in _ids(validate_rules(rules))
+        assert_lint(validate_rules(rules), "WA022")
 
     def test_wa022_unique_refs_ok(self):
         rules = [_rule(ref="a"), _rule(ref="b")]
-        assert "WA022" not in _ids(validate_rules(rules))
+        assert_no_lint(validate_rules(rules), "WA022")
 
     def test_wa022_fires_once_for_triple(self):
         rules = [_rule(ref="dup"), _rule(ref="dup"), _rule(ref="dup")]
@@ -126,28 +123,28 @@ class TestDuplicateRef:
     def test_wa022_empty_ref_not_flagged(self):
         """Empty refs are caught by WA001, not WA022."""
         rules = [_rule(ref=""), _rule(ref="")]
-        assert "WA022" not in _ids(validate_rules(rules))
+        assert_no_lint(validate_rules(rules), "WA022")
 
 
 class TestRefFormat:
     def test_wa010_too_long(self):
-        assert "WA010" in _ids(validate_rules([_rule(ref="a" * 129)]))
+        assert_lint(validate_rules([_rule(ref="a" * 129)]), "WA010")
 
     def test_wa010_max_length_ok(self):
-        assert "WA010" not in _ids(validate_rules([_rule(ref="a" * 128)]))
+        assert_no_lint(validate_rules([_rule(ref="a" * 128)]), "WA010")
 
     def test_wa010_invalid_chars_space(self):
-        assert "WA010" in _ids(validate_rules([_rule(ref="bad name")]))
+        assert_lint(validate_rules([_rule(ref="bad name")]), "WA010")
 
     def test_wa010_invalid_chars_dot(self):
-        assert "WA010" in _ids(validate_rules([_rule(ref="bad.name")]))
+        assert_lint(validate_rules([_rule(ref="bad.name")]), "WA010")
 
     def test_wa010_valid_chars(self):
-        assert "WA010" not in _ids(validate_rules([_rule(ref="My_Rule-01")]))
+        assert_no_lint(validate_rules([_rule(ref="My_Rule-01")]), "WA010")
 
     def test_wa010_not_emitted_for_empty_ref(self):
         # WA001 covers empty ref; WA010 should not also fire
-        ids = _ids(validate_rules([_rule(ref="")]))
+        ids = [r.rule_id for r in validate_rules([_rule(ref="")])]
         assert "WA001" in ids
         assert "WA010" not in ids
 
@@ -159,7 +156,7 @@ class TestMissingPriority:
     def test_wa002_missing_priority(self):
         r = _rule()
         del r["Priority"]
-        assert "WA002" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA002")
 
 
 # ---------------------------------------------------------------------------
@@ -167,31 +164,31 @@ class TestMissingPriority:
 # ---------------------------------------------------------------------------
 class TestPriority:
     def test_wa100_negative(self):
-        assert "WA100" in _ids(validate_rules([_rule(Priority=-1)]))
+        assert_lint(validate_rules([_rule(Priority=-1)]), "WA100")
 
     def test_wa100_not_integer(self):
-        assert "WA100" in _ids(validate_rules([_rule(Priority="5")]))
+        assert_lint(validate_rules([_rule(Priority="5")]), "WA100")
 
     def test_wa100_bool_rejected(self):
-        assert "WA100" in _ids(validate_rules([_rule(Priority=True)]))
+        assert_lint(validate_rules([_rule(Priority=True)]), "WA100")
 
     def test_wa100_float_rejected(self):
-        assert "WA100" in _ids(validate_rules([_rule(Priority=1.5)]))
+        assert_lint(validate_rules([_rule(Priority=1.5)]), "WA100")
 
     def test_wa100_zero_accepted(self):
-        assert "WA100" not in _ids(validate_rules([_rule(Priority=0)]))
+        assert_no_lint(validate_rules([_rule(Priority=0)]), "WA100")
 
     def test_wa101_duplicate(self):
         a = _rule(ref="a", Priority=1)
         b = _rule(ref="b", Priority=1)
         b["VisibilityConfig"]["MetricName"] = "other"
-        assert "WA101" in _ids(validate_rules([a, b]))
+        assert_lint(validate_rules([a, b]), "WA101")
 
     def test_wa101_no_false_positive(self):
         a = _rule(ref="a", Priority=1)
         b = _rule(ref="b", Priority=2)
         b["VisibilityConfig"]["MetricName"] = "other"
-        assert "WA101" not in _ids(validate_rules([a, b]))
+        assert_no_lint(validate_rules([a, b]), "WA101")
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +198,7 @@ class TestMissingVisibility:
     def test_wa003_missing_visibility_config(self):
         r = _rule()
         del r["VisibilityConfig"]
-        assert "WA003" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA003")
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +208,11 @@ class TestActionPresence:
     def test_wa004_missing_both_actions(self):
         r = _rule()
         del r["Action"]
-        assert "WA004" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA004")
 
     def test_wa005_both_actions_present(self):
         r = _rule(OverrideAction={"Count": {}})
-        assert "WA005" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA005")
 
 
 # ---------------------------------------------------------------------------
@@ -224,23 +221,23 @@ class TestActionPresence:
 class TestActions:
     @pytest.mark.parametrize("action_key", ["Allow", "Block", "Count", "Captcha", "Challenge"])
     def test_wa200_valid_actions(self, action_key):
-        assert "WA200" not in _ids(validate_rules([_rule(Action={action_key: {}})]))
+        assert_no_lint(validate_rules([_rule(Action={action_key: {}})]), "WA200")
 
     def test_wa200_invalid_action(self):
-        assert "WA200" in _ids(validate_rules([_rule(Action={"Drop": {}})]))
+        assert_lint(validate_rules([_rule(Action={"Drop": {}})]), "WA200")
 
     @pytest.mark.parametrize("override_key", ["None", "Count"])
     def test_wa201_valid_override(self, override_key):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {override_key: {}}
-        assert "WA201" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA201")
 
     def test_wa201_invalid_override(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"Block": {}}
-        assert "WA201" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA201")
 
 
 # ---------------------------------------------------------------------------
@@ -248,32 +245,32 @@ class TestActions:
 # ---------------------------------------------------------------------------
 class TestStatement:
     def test_wa300_empty_statement(self):
-        assert "WA300" in _ids(validate_rules([_rule(Statement={})]))
+        assert_lint(validate_rules([_rule(Statement={})]), "WA300")
 
     def test_wa300_multiple_types(self):
         stmt = {"ByteMatchStatement": {}, "GeoMatchStatement": {}}
-        assert "WA300" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA300")
 
     def test_wa300_exactly_one_ok(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
-        assert "WA300" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA300")
 
     def test_wa300_multiple_types_no_cascading_errors(self):
         """WA300 should stop further validation — no downstream type-specific errors."""
         stmt = {"ByteMatchStatement": {}, "GeoMatchStatement": {}}
-        ids = _ids(validate_rules([_rule(Statement=stmt)]))
+        ids = [r.rule_id for r in validate_rules([_rule(Statement=stmt)])]
         assert "WA300" in ids
         # After WA300, no type-specific checks should fire
         assert "WA314" not in ids  # required field checks
         assert "WA301" not in ids  # unknown type checks
 
     def test_wa301_unknown_type(self):
-        assert "WA301" in _ids(validate_rules([_rule(Statement={"FooStatement": {}})]))
+        assert_lint(validate_rules([_rule(Statement={"FooStatement": {}})]), "WA301")
 
     def test_wa301_asn_match_statement(self):
         """AsnMatchStatement is a recognised statement type."""
         stmt = {"AsnMatchStatement": {"AsnList": [1234]}}
-        assert "WA301" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA301")
 
     @pytest.mark.parametrize(
         "stype",
@@ -290,13 +287,14 @@ class TestStatement:
         ],
     )
     def test_wa301_known_types(self, stype):
-        assert "WA301" not in _ids(
-            validate_rules([_rule(Statement={stype: {"AggregateKeyType": "IP", "Limit": 200}})])
+        assert_no_lint(
+            validate_rules([_rule(Statement={stype: {"AggregateKeyType": "IP", "Limit": 200}})]),
+            "WA301",
         )
 
     def test_wa302_invalid_arn(self):
         stmt = {"IPSetReferenceStatement": {"ARN": "arn:gcp:storage:us:12345:bucket"}}
-        assert "WA302" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA302")
 
     def test_wa302_valid_arn(self):
         stmt = {
@@ -304,7 +302,7 @@ class TestStatement:
                 "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/ipset/my-ip-set/abc"
             }
         }
-        assert "WA302" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA302")
 
     def test_wa302_nested_arn(self):
         stmt = {
@@ -312,7 +310,7 @@ class TestStatement:
                 "Statement": {"IPSetReferenceStatement": {"ARN": "arn:azure:something:bad"}}
             }
         }
-        assert "WA302" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA302")
 
     def test_wa302_nested_arn_no_duplicates(self):
         """Compound statements must not produce duplicate WA302 results."""
@@ -334,42 +332,42 @@ class TestStatement:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA302" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA302")
 
     def test_wa303_rate_limit_below_10(self):
         stmt = {"RateBasedStatement": {"Limit": 5, "AggregateKeyType": "IP"}}
-        assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_rate_limit_not_integer(self):
         stmt = {"RateBasedStatement": {"Limit": "200", "AggregateKeyType": "IP"}}
-        assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_rate_limit_bool(self):
         stmt = {"RateBasedStatement": {"Limit": True, "AggregateKeyType": "IP"}}
-        assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_rate_limit_exactly_10(self):
         stmt = {"RateBasedStatement": {"Limit": 10, "AggregateKeyType": "IP"}}
-        assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_rate_limit_50_ok(self):
         """Value 50 is valid (above the minimum of 10)."""
         stmt = {"RateBasedStatement": {"Limit": 50, "AggregateKeyType": "IP"}}
-        assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_rate_limit_missing(self):
         stmt = {"RateBasedStatement": {"AggregateKeyType": "IP"}}
-        assert "WA303" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa304_missing_aggregate_key_type(self):
         stmt = {"RateBasedStatement": {"Limit": 200}}
-        assert "WA304" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA304")
 
     def test_valid_rate_based_statement(self):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA303" not in _ids(results)
-        assert "WA304" not in _ids(results)
+        assert_no_lint(results, "WA303")
+        assert_no_lint(results, "WA304")
 
 
 # ---------------------------------------------------------------------------
@@ -379,11 +377,11 @@ class TestAggregateKeyType:
     @pytest.mark.parametrize("akt", ["IP", "FORWARDED_IP", "CUSTOM_KEYS", "CONSTANT"])
     def test_wa305_valid(self, akt):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": akt}}
-        assert "WA305" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA305")
 
     def test_wa305_invalid(self):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "HEADER"}}
-        assert "WA305" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA305")
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +395,7 @@ class TestLimitUpperBound:
                 "AggregateKeyType": "IP",
             }
         }
-        assert "WA306" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA306")
 
     def test_wa306_at_max(self):
         stmt = {
@@ -406,7 +404,7 @@ class TestLimitUpperBound:
                 "AggregateKeyType": "IP",
             }
         }
-        assert "WA306" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA306")
 
 
 # ---------------------------------------------------------------------------
@@ -415,11 +413,11 @@ class TestLimitUpperBound:
 class TestCompoundStatements:
     def test_wa310_and_zero_statements(self):
         stmt = {"AndStatement": {"Statements": []}}
-        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_and_one_statement(self):
         stmt = {"AndStatement": {"Statements": [{"ByteMatchStatement": {}}]}}
-        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_and_two_ok(self):
         stmt = {
@@ -430,11 +428,11 @@ class TestCompoundStatements:
                 ]
             }
         }
-        assert "WA310" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_or_one_statement(self):
         stmt = {"OrStatement": {"Statements": [{"ByteMatchStatement": {}}]}}
-        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_or_two_ok(self):
         stmt = {
@@ -445,7 +443,7 @@ class TestCompoundStatements:
                 ]
             }
         }
-        assert "WA310" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_nested_and_inside_or(self):
         """Recursive validation: And inside Or still checked."""
@@ -457,19 +455,19 @@ class TestCompoundStatements:
                 ]
             }
         }
-        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_and_eleven_too_many(self):
         """AndStatement with 11 statements exceeds max of 10."""
         stmts = [{"ByteMatchStatement": {}} for _ in range(11)]
         stmt = {"AndStatement": {"Statements": stmts}}
-        assert "WA310" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
     def test_wa310_and_ten_ok(self):
         """AndStatement with 10 statements is valid."""
         stmts = [{"ByteMatchStatement": {}} for _ in range(10)]
         stmt = {"AndStatement": {"Statements": stmts}}
-        assert "WA310" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA310")
 
 
 # ---------------------------------------------------------------------------
@@ -478,11 +476,11 @@ class TestCompoundStatements:
 class TestNotStatement:
     def test_wa311_missing_statement(self):
         stmt = {"NotStatement": {}}
-        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA311")
 
     def test_wa311_valid(self):
         stmt = {"NotStatement": {"Statement": {"GeoMatchStatement": {}}}}
-        assert "WA311" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA311")
 
     def test_wa311_recursive(self):
         """NotStatement inside AndStatement still validated."""
@@ -494,17 +492,17 @@ class TestNotStatement:
                 ]
             }
         }
-        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA311")
 
     def test_wa311_not_statement_string(self):
         """NotStatement.Statement that is a string fires WA311."""
         stmt = {"NotStatement": {"Statement": "invalid"}}
-        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA311")
 
     def test_wa311_not_statement_list(self):
         """NotStatement.Statement that is a list fires WA311."""
         stmt = {"NotStatement": {"Statement": []}}
-        assert "WA311" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA311")
 
 
 # ---------------------------------------------------------------------------
@@ -513,11 +511,11 @@ class TestNotStatement:
 class TestNonDictInCompound:
     def test_wa322_non_dict_in_and_statement(self):
         stmt = {"AndStatement": {"Statements": [{"ByteMatchStatement": {}}, "invalid"]}}
-        assert "WA322" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA322")
 
     def test_wa322_non_dict_in_or_statement(self):
         stmt = {"OrStatement": {"Statements": [{"ByteMatchStatement": {}}, "invalid"]}}
-        assert "WA322" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA322")
 
     def test_wa322_all_dicts_ok(self):
         stmt = {
@@ -528,7 +526,7 @@ class TestNonDictInCompound:
                 ]
             }
         }
-        assert "WA322" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA322")
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +541,7 @@ class TestByteMatch:
                 "SearchString": "x",
             }
         }
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
     def test_wa312_missing_text_transformations(self):
         stmt = {
@@ -553,7 +551,7 @@ class TestByteMatch:
                 "SearchString": "x",
             }
         }
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
     def test_wa312_missing_positional_constraint(self):
         stmt = {
@@ -563,7 +561,7 @@ class TestByteMatch:
                 "SearchString": "x",
             }
         }
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
     def test_wa312_missing_search_string(self):
         stmt = {
@@ -573,22 +571,21 @@ class TestByteMatch:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
     def test_wa312_all_present(self):
         # _rule() default has all required fields
-        assert "WA312" not in _ids(validate_rules([_rule()]))
+        assert_no_lint(validate_rules([_rule()]), "WA312")
 
     def test_wa312_empty_byte_match(self):
         stmt = {"ByteMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa312_count = _ids(results).count("WA312")
-        assert wa312_count == 4  # All 4 fields missing
+        assert_lint(results, "WA312", count=4)
 
     def test_wa312_nested_byte_match(self):
         """ByteMatchStatement inside NotStatement still validated."""
         stmt = {"NotStatement": {"Statement": {"ByteMatchStatement": {}}}}
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
 
 # ---------------------------------------------------------------------------
@@ -597,27 +594,27 @@ class TestByteMatch:
 class TestGeoMatch:
     def test_wa313_valid_codes(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "DE", "FR"]}}
-        assert "WA313" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
     def test_wa313_three_letter_code(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["USA"]}}
-        assert "WA313" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
     def test_wa313_lowercase(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["us"]}}
-        assert "WA313" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
     def test_wa313_numeric(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["12"]}}
-        assert "WA313" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
     def test_wa313_non_string(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": [42]}}
-        assert "WA313" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
     def test_wa313_empty_list_ok(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": []}}
-        assert "WA313" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA313")
 
 
 # ---------------------------------------------------------------------------
@@ -627,17 +624,17 @@ class TestVisibilityConfig:
     def test_wa400_missing_sampled(self):
         vc = {"CloudWatchMetricsEnabled": True, "MetricName": "m"}
         results = validate_rules([_rule(VisibilityConfig=vc)])
-        assert "WA400" in _ids(results)
+        assert_lint(results, "WA400")
 
     def test_wa400_missing_cloudwatch(self):
         vc = {"SampledRequestsEnabled": True, "MetricName": "m"}
         results = validate_rules([_rule(VisibilityConfig=vc)])
-        assert "WA400" in _ids(results)
+        assert_lint(results, "WA400")
 
     def test_wa400_missing_metric_name(self):
         vc = {"SampledRequestsEnabled": True, "CloudWatchMetricsEnabled": True}
         results = validate_rules([_rule(VisibilityConfig=vc)])
-        assert "WA400" in _ids(results)
+        assert_lint(results, "WA400")
 
     def test_wa401_bool_field_gets_int(self):
         vc = {
@@ -646,7 +643,7 @@ class TestVisibilityConfig:
             "MetricName": "m",
         }
         results = validate_rules([_rule(VisibilityConfig=vc)])
-        assert "WA401" in _ids(results)
+        assert_lint(results, "WA401")
 
     def test_wa401_string_field_gets_int(self):
         vc = {
@@ -655,10 +652,10 @@ class TestVisibilityConfig:
             "MetricName": 123,
         }
         results = validate_rules([_rule(VisibilityConfig=vc)])
-        assert "WA401" in _ids(results)
+        assert_lint(results, "WA401")
 
     def test_wa401_valid_types(self):
-        assert "WA401" not in _ids(validate_rules([_rule()]))
+        assert_no_lint(validate_rules([_rule()]), "WA401")
 
     def test_wa402_metric_name_too_long(self):
         vc = {
@@ -666,7 +663,7 @@ class TestVisibilityConfig:
             "CloudWatchMetricsEnabled": True,
             "MetricName": "m" * 129,
         }
-        assert "WA402" in _ids(validate_rules([_rule(VisibilityConfig=vc)]))
+        assert_lint(validate_rules([_rule(VisibilityConfig=vc)]), "WA402")
 
     def test_wa402_metric_name_at_limit(self):
         vc = {
@@ -674,7 +671,7 @@ class TestVisibilityConfig:
             "CloudWatchMetricsEnabled": True,
             "MetricName": "m" * 128,
         }
-        assert "WA402" not in _ids(validate_rules([_rule(VisibilityConfig=vc)]))
+        assert_no_lint(validate_rules([_rule(VisibilityConfig=vc)]), "WA402")
 
 
 # ---------------------------------------------------------------------------
@@ -685,13 +682,13 @@ class TestDuplicateMetricName:
         a = _rule(ref="a", Priority=1)
         b = _rule(ref="b", Priority=2)
         # Both use default MetricName="test-metric"
-        assert "WA500" in _ids(validate_rules([a, b]))
+        assert_lint(validate_rules([a, b]), "WA500")
 
     def test_wa500_unique(self):
         a = _rule(ref="a", Priority=1)
         b = _rule(ref="b", Priority=2)
         b["VisibilityConfig"]["MetricName"] = "other"
-        assert "WA500" not in _ids(validate_rules([a, b]))
+        assert_no_lint(validate_rules([a, b]), "WA500")
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +704,7 @@ class TestScopeDown:
                 "ScopeDownStatement": {"FooStatement": {}},
             }
         }
-        assert "WA301" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA301")
 
     def test_scope_down_byte_match_checked(self):
         stmt = {
@@ -717,7 +714,7 @@ class TestScopeDown:
                 "ScopeDownStatement": {"ByteMatchStatement": {}},
             }
         }
-        assert "WA312" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA312")
 
 
 # ---------------------------------------------------------------------------
@@ -729,26 +726,25 @@ class TestScopeDown:
 class TestUnknownFields:
     def test_wa020_unknown_field(self):
         r = _rule(Foo="bar")
-        assert "WA020" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA020")
 
     def test_wa020_typo_in_field(self):
         r = _rule(priority=1)  # lowercase — not a known field
-        assert "WA020" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA020")
 
     def test_wa020_known_fields_no_warning(self):
         r = _rule(RuleLabels=[{"Name": "test:label"}])
-        assert "WA020" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA020")
 
     def test_wa020_multiple_unknown(self):
         r = _rule(Foo="a", Bar="b")
         results = validate_rules([r])
-        wa020_count = _ids(results).count("WA020")
-        assert wa020_count == 2
+        assert_lint(results, "WA020", count=2)
 
     def test_wa020_all_valid_fields(self):
         """All valid top-level fields should not trigger WA020."""
         r = _rule(RuleLabels=[])
-        assert "WA020" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA020")
 
 
 # ---------------------------------------------------------------------------
@@ -756,28 +752,28 @@ class TestUnknownFields:
 # ---------------------------------------------------------------------------
 class TestActionMustBeDict:
     def test_wa021_action_string(self):
-        assert "WA021" in _ids(validate_rules([_rule(Action="Block")]))
+        assert_lint(validate_rules([_rule(Action="Block")]), "WA021")
 
     def test_wa021_action_list(self):
-        assert "WA021" in _ids(validate_rules([_rule(Action=["Block"])]))
+        assert_lint(validate_rules([_rule(Action=["Block"])]), "WA021")
 
     def test_wa021_action_int(self):
-        assert "WA021" in _ids(validate_rules([_rule(Action=42)]))
+        assert_lint(validate_rules([_rule(Action=42)]), "WA021")
 
     def test_wa021_action_dict_ok(self):
-        assert "WA021" not in _ids(validate_rules([_rule(Action={"Block": {}})]))
+        assert_no_lint(validate_rules([_rule(Action={"Block": {}})]), "WA021")
 
     def test_wa021_override_action_string(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = "Count"
-        assert "WA021" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA021")
 
     def test_wa021_override_action_dict_ok(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
-        assert "WA021" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA021")
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +782,7 @@ class TestActionMustBeDict:
 class TestStatementRequiredFields:
     def test_wa314_ipset_missing_arn(self):
         stmt = {"IPSetReferenceStatement": {}}
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_ipset_has_arn(self):
         stmt = {
@@ -794,13 +790,12 @@ class TestStatementRequiredFields:
                 "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/ipset/test/abc"
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_regex_match_missing_fields(self):
         stmt = {"RegexMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 3  # RegexString, FieldToMatch, TextTransformations
+        assert_lint(results, "WA314", count=3)
 
     def test_wa314_regex_match_complete(self):
         stmt = {
@@ -810,19 +805,17 @@ class TestStatementRequiredFields:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_regex_pattern_set_missing_fields(self):
         stmt = {"RegexPatternSetReferenceStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 3  # ARN, FieldToMatch, TextTransformations
+        assert_lint(results, "WA314", count=3)
 
     def test_wa314_size_constraint_missing_fields(self):
         stmt = {"SizeConstraintStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 4  # FieldToMatch, ComparisonOperator, Size, TextTransformations
+        assert_lint(results, "WA314", count=4)
 
     def test_wa314_size_constraint_complete(self):
         stmt = {
@@ -833,13 +826,12 @@ class TestStatementRequiredFields:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_sqli_missing_fields(self):
         stmt = {"SqliMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 2  # FieldToMatch, TextTransformations
+        assert_lint(results, "WA314", count=2)
 
     def test_wa314_sqli_complete(self):
         stmt = {
@@ -848,13 +840,12 @@ class TestStatementRequiredFields:
                 "TextTransformations": [{"Priority": 0, "Type": "URL_DECODE"}],
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_xss_missing_fields(self):
         stmt = {"XssMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 2  # FieldToMatch, TextTransformations
+        assert_lint(results, "WA314", count=2)
 
     def test_wa314_xss_complete(self):
         stmt = {
@@ -863,23 +854,21 @@ class TestStatementRequiredFields:
                 "TextTransformations": [{"Priority": 0, "Type": "HTML_ENTITY_DECODE"}],
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_label_match_missing_fields(self):
         stmt = {"LabelMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 2  # Scope, Key
+        assert_lint(results, "WA314", count=2)
 
     def test_wa314_label_match_complete(self):
         stmt = {"LabelMatchStatement": {"Scope": "LABEL", "Key": "awswaf:managed:test"}}
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_managed_rule_group_missing_fields(self):
         stmt = {"ManagedRuleGroupStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        wa314_count = _ids(results).count("WA314")
-        assert wa314_count == 2  # VendorName, Name
+        assert_lint(results, "WA314", count=2)
 
     def test_wa314_managed_rule_group_complete(self):
         stmt = {
@@ -888,11 +877,11 @@ class TestStatementRequiredFields:
                 "Name": "AWSManagedRulesCommonRuleSet",
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_rule_group_reference_missing_arn(self):
         stmt = {"RuleGroupReferenceStatement": {}}
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_rule_group_reference_complete(self):
         stmt = {
@@ -900,7 +889,7 @@ class TestStatementRequiredFields:
                 "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/rulegroup/test/abc"
             }
         }
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_recursive_in_and_statement(self):
         """WA314 fires recursively inside compound statements."""
@@ -912,11 +901,11 @@ class TestStatementRequiredFields:
                 ]
             }
         }
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_recursive_in_not_statement(self):
         stmt = {"NotStatement": {"Statement": {"IPSetReferenceStatement": {}}}}
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_recursive_in_rate_based(self):
         stmt = {
@@ -926,22 +915,22 @@ class TestStatementRequiredFields:
                 "ScopeDownStatement": {"SqliMatchStatement": {}},
             }
         }
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_asn_match_missing_asn_list(self):
         stmt = {"AsnMatchStatement": {}}
-        assert "WA314" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_asn_match_complete(self):
         stmt = {"AsnMatchStatement": {"AsnList": [64496]}}
-        assert "WA314" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA314")
 
     def test_wa314_does_not_duplicate_wa312(self):
         """ByteMatchStatement uses WA312, not WA314, for required fields."""
         stmt = {"ByteMatchStatement": {}}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA312" in _ids(results)
-        assert "WA314" not in _ids(results)
+        assert_lint(results, "WA312")
+        assert_no_lint(results, "WA314")
 
 
 # ---------------------------------------------------------------------------
@@ -961,7 +950,7 @@ class TestStatementEnums:
                 "PositionalConstraint": val,
             }
         }
-        assert "WA315" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
     def test_wa315_invalid_positional_constraint(self):
         stmt = {
@@ -973,7 +962,7 @@ class TestStatementEnums:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA315" in _ids(results)
+        assert_lint(results, "WA315")
         wa315 = [r for r in results if r.rule_id == "WA315"]
         assert "PositionalConstraint" in wa315[0].message
 
@@ -988,7 +977,7 @@ class TestStatementEnums:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA315" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
     def test_wa315_invalid_comparison_operator(self):
         stmt = {
@@ -1000,18 +989,18 @@ class TestStatementEnums:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA315" in _ids(results)
+        assert_lint(results, "WA315")
 
     # LabelMatchStatement.Scope
     @pytest.mark.parametrize("val", ["LABEL", "NAMESPACE"])
     def test_wa315_valid_label_scope(self, val):
         stmt = {"LabelMatchStatement": {"Scope": val, "Key": "test"}}
-        assert "WA315" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
     def test_wa315_invalid_label_scope(self):
         stmt = {"LabelMatchStatement": {"Scope": "PREFIX", "Key": "test"}}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA315" in _ids(results)
+        assert_lint(results, "WA315")
         wa315 = [r for r in results if r.rule_id == "WA315"]
         assert "Scope" in wa315[0].message
 
@@ -1025,7 +1014,7 @@ class TestStatementEnums:
                 "SensitivityLevel": val,
             }
         }
-        assert "WA315" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
     def test_wa315_invalid_sensitivity_level(self):
         stmt = {
@@ -1036,7 +1025,7 @@ class TestStatementEnums:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA315" in _ids(results)
+        assert_lint(results, "WA315")
 
     def test_wa315_sensitivity_level_absent_ok(self):
         """SensitivityLevel is optional — absence should not fire WA315."""
@@ -1046,7 +1035,7 @@ class TestStatementEnums:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA315" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
     def test_wa315_recursive_in_compound(self):
         """Enum validation fires recursively inside And/Or."""
@@ -1065,7 +1054,7 @@ class TestStatementEnums:
                 ]
             }
         }
-        assert "WA315" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA315")
 
 
 # ---------------------------------------------------------------------------
@@ -1081,7 +1070,7 @@ class TestFieldToMatch:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA316" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA316")
 
     @pytest.mark.parametrize(
         "key",
@@ -1118,7 +1107,7 @@ class TestFieldToMatch:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA316" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA316")
 
     def test_wa316_multiple_keys(self):
         stmt = {
@@ -1130,7 +1119,7 @@ class TestFieldToMatch:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA316" in _ids(results)
+        assert_lint(results, "WA316")
         wa316 = [r for r in results if r.rule_id == "WA316"]
         assert "exactly 1 key" in wa316[0].message
 
@@ -1144,7 +1133,7 @@ class TestFieldToMatch:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA316" in _ids(results)
+        assert_lint(results, "WA316")
 
     def test_wa316_unknown_key(self):
         stmt = {
@@ -1156,7 +1145,7 @@ class TestFieldToMatch:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA316" in _ids(results)
+        assert_lint(results, "WA316")
         wa316 = [r for r in results if r.rule_id == "WA316"]
         assert any("Unknown FieldToMatch key" in r.message for r in wa316)
 
@@ -1170,7 +1159,7 @@ class TestFieldToMatch:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA316" in _ids(results)
+        assert_lint(results, "WA316")
         wa316 = [r for r in results if r.rule_id == "WA316"]
         assert any("SingleHeader requires" in r.message for r in wa316)
 
@@ -1183,7 +1172,7 @@ class TestFieldToMatch:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA316" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA316")
 
     def test_wa316_single_query_argument_missing_name(self):
         stmt = {
@@ -1195,7 +1184,7 @@ class TestFieldToMatch:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA316" in _ids(results)
+        assert_lint(results, "WA316")
         wa316 = [r for r in results if r.rule_id == "WA316"]
         assert any("SingleQueryArgument requires" in r.message for r in wa316)
 
@@ -1226,7 +1215,7 @@ class TestFieldToMatch:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA316" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA316")
 
     def test_wa316_on_regex_match_statement(self):
         """FieldToMatch validation also applies to other statement types."""
@@ -1237,7 +1226,7 @@ class TestFieldToMatch:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA316" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA316")
 
 
 # ---------------------------------------------------------------------------
@@ -1254,7 +1243,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_empty_list(self):
         stmt = {
@@ -1266,7 +1255,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
         wa317 = [r for r in results if r.rule_id == "WA317"]
         assert "must not be empty" in wa317[0].message
 
@@ -1279,7 +1268,7 @@ class TestTextTransformations:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA317" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA317")
 
     def test_wa317_valid_multiple(self):
         stmt = {
@@ -1293,7 +1282,7 @@ class TestTextTransformations:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA317" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA317")
 
     def test_wa317_element_not_dict(self):
         stmt = {
@@ -1305,7 +1294,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_missing_priority(self):
         stmt = {
@@ -1317,7 +1306,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
         wa317 = [r for r in results if r.rule_id == "WA317"]
         assert any("Priority" in r.message for r in wa317)
 
@@ -1331,7 +1320,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_priority_not_int(self):
         stmt = {
@@ -1343,7 +1332,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_priority_bool_rejected(self):
         stmt = {
@@ -1355,7 +1344,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_type_not_string(self):
         stmt = {
@@ -1367,7 +1356,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
 
     def test_wa317_invalid_type_value(self):
         stmt = {
@@ -1379,7 +1368,7 @@ class TestTextTransformations:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA317" in _ids(results)
+        assert_lint(results, "WA317")
         wa317 = [r for r in results if r.rule_id == "WA317"]
         assert any("REVERSE" in r.message for r in wa317)
 
@@ -1418,7 +1407,7 @@ class TestTextTransformations:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA317" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA317")
 
     def test_wa317_on_sqli_statement(self):
         """TextTransformations validation applies to all statement types that use it."""
@@ -1428,7 +1417,7 @@ class TestTextTransformations:
                 "TextTransformations": [],
             }
         }
-        assert "WA317" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA317")
 
     def test_wa317_on_xss_statement(self):
         stmt = {
@@ -1437,7 +1426,7 @@ class TestTextTransformations:
                 "TextTransformations": [{"Priority": 0, "Type": "INVALID"}],
             }
         }
-        assert "WA317" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA317")
 
 
 # ---------------------------------------------------------------------------
@@ -1452,7 +1441,7 @@ class TestRateBasedConditional:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA318" in _ids(results)
+        assert_lint(results, "WA318")
         wa318 = [r for r in results if r.rule_id == "WA318"]
         assert "CustomKeys" in wa318[0].message
 
@@ -1464,7 +1453,7 @@ class TestRateBasedConditional:
                 "CustomKeys": [],
             }
         }
-        assert "WA318" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA318")
 
     def test_wa318_custom_keys_valid(self):
         stmt = {
@@ -1474,7 +1463,7 @@ class TestRateBasedConditional:
                 "CustomKeys": [{"Header": {"Name": "x-forwarded-for"}}],
             }
         }
-        assert "WA318" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA318")
 
     def test_wa318_forwarded_ip_without_config(self):
         stmt = {
@@ -1484,7 +1473,7 @@ class TestRateBasedConditional:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA318" in _ids(results)
+        assert_lint(results, "WA318")
         wa318 = [r for r in results if r.rule_id == "WA318"]
         assert "ForwardedIPConfig" in wa318[0].message
 
@@ -1499,17 +1488,17 @@ class TestRateBasedConditional:
                 },
             }
         }
-        assert "WA318" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA318")
 
     def test_wa318_ip_type_no_requirements(self):
         """AggregateKeyType=IP has no extra requirements."""
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
-        assert "WA318" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA318")
 
     def test_wa318_constant_type_no_requirements(self):
         """AggregateKeyType=CONSTANT has no extra requirements."""
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "CONSTANT"}}
-        assert "WA318" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA318")
 
 
 # ---------------------------------------------------------------------------
@@ -1517,31 +1506,31 @@ class TestRateBasedConditional:
 # ---------------------------------------------------------------------------
 class TestActionOneKey:
     def test_wa350_action_zero_keys(self):
-        assert "WA350" in _ids(validate_rules([_rule(Action={})]))
+        assert_lint(validate_rules([_rule(Action={})]), "WA350")
 
     def test_wa350_action_two_keys(self):
-        assert "WA350" in _ids(validate_rules([_rule(Action={"Block": {}, "Count": {}})]))
+        assert_lint(validate_rules([_rule(Action={"Block": {}, "Count": {}})]), "WA350")
 
     def test_wa350_action_one_key_ok(self):
-        assert "WA350" not in _ids(validate_rules([_rule(Action={"Block": {}})]))
+        assert_no_lint(validate_rules([_rule(Action={"Block": {}})]), "WA350")
 
     def test_wa350_override_action_zero_keys(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {}
-        assert "WA350" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA350")
 
     def test_wa350_override_action_two_keys(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"None": {}, "Count": {}}
-        assert "WA350" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA350")
 
     def test_wa350_override_action_one_key_ok(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
-        assert "WA350" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA350")
 
 
 # ---------------------------------------------------------------------------
@@ -1549,14 +1538,14 @@ class TestActionOneKey:
 # ---------------------------------------------------------------------------
 class TestUnknownActionType:
     def test_wa351_unknown_action(self):
-        assert "WA351" in _ids(validate_rules([_rule(Action={"Drop": {}})]))
+        assert_lint(validate_rules([_rule(Action={"Drop": {}})]), "WA351")
 
     def test_wa351_known_action_ok(self):
-        assert "WA351" not in _ids(validate_rules([_rule(Action={"Block": {}})]))
+        assert_no_lint(validate_rules([_rule(Action={"Block": {}})]), "WA351")
 
     @pytest.mark.parametrize("key", ["Allow", "Block", "Count", "Captcha", "Challenge"])
     def test_wa351_all_valid(self, key):
-        assert "WA351" not in _ids(validate_rules([_rule(Action={key: {}})]))
+        assert_no_lint(validate_rules([_rule(Action={key: {}})]), "WA351")
 
 
 # ---------------------------------------------------------------------------
@@ -1568,14 +1557,14 @@ class TestOverrideActionOnNonGroup:
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
         # Default statement is ByteMatchStatement — not a group
-        assert "WA352" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA352")
 
     def test_wa352_override_on_managed_rule_group(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
         r["Statement"] = {"ManagedRuleGroupStatement": {"VendorName": "AWS", "Name": "Core"}}
-        assert "WA352" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA352")
 
     def test_wa352_override_on_rule_group_reference(self):
         r = _rule()
@@ -1586,14 +1575,14 @@ class TestOverrideActionOnNonGroup:
                 "ARN": "arn:aws:wafv2:us-east-1:123:regional/rulegroup/test/abc"
             }
         }
-        assert "WA352" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA352")
 
     def test_wa352_override_on_geo_match(self):
         r = _rule()
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
         r["Statement"] = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
-        assert "WA352" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA352")
 
     def test_wa352_no_statement_no_crash(self):
         """If there's no Statement key, WA352 should not crash."""
@@ -1602,12 +1591,12 @@ class TestOverrideActionOnNonGroup:
         del r["Statement"]
         r["OverrideAction"] = {"Count": {}}
         results = validate_rules([r])
-        assert "WA352" not in _ids(results)
+        assert_no_lint(results, "WA352")
 
     def test_wa352_not_fired_for_action(self):
         """WA352 only applies to OverrideAction, not Action."""
         r = _rule(Action={"Block": {}})
-        assert "WA352" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA352")
 
 
 # ---------------------------------------------------------------------------
@@ -1616,40 +1605,40 @@ class TestOverrideActionOnNonGroup:
 class TestCustomResponseCode:
     def test_wa353_valid_code(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
-        assert "WA353" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_200(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 200}}})
-        assert "WA353" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_599(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 599}}})
-        assert "WA353" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_below_200(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 199}}})
-        assert "WA353" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_above_599(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 600}}})
-        assert "WA353" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_not_integer(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": "403"}}})
-        assert "WA353" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA353")
 
     def test_wa353_code_bool(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": True}}})
-        assert "WA353" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA353")
 
     def test_wa353_no_custom_response_ok(self):
         r = _rule(Action={"Block": {}})
-        assert "WA353" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA353")
 
     def test_wa353_block_not_dict(self):
         """If Block value is not a dict, WA353 should not crash."""
         r = _rule(Action={"Block": "yes"})
-        assert "WA353" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA353")
 
 
 # ---------------------------------------------------------------------------
@@ -1659,23 +1648,23 @@ class TestCustomResponseBody:
     def test_wa354_body_within_limit(self):
         body = "x" * 4096
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
-        assert "WA354" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA354")
 
     def test_wa354_body_exceeds_limit(self):
         body = "x" * 4097
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
-        assert "WA354" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA354")
 
     def test_wa354_no_body_ok(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
-        assert "WA354" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA354")
 
     def test_wa354_multibyte_body(self):
         """Multi-byte characters push UTF-8 byte length over limit."""
         # U+00E9 is 2 bytes in UTF-8; 2731 chars * 2 = 5462 bytes > 4096
         body = "\u00e9" * 2731
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": body}}})
-        assert "WA354" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA354")
 
 
 # ---------------------------------------------------------------------------
@@ -1687,18 +1676,18 @@ class TestCustomResponseHeaders:
         r = _rule(
             Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
         )
-        assert "WA355" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA355")
 
     def test_wa355_eleven_headers_error(self):
         headers = [{"Name": f"x-h{i}", "Value": "v"} for i in range(11)]
         r = _rule(
             Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
         )
-        assert "WA355" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA355")
 
     def test_wa355_no_headers_ok(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
-        assert "WA355" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA355")
 
 
 # ---------------------------------------------------------------------------
@@ -1710,14 +1699,14 @@ class TestCustomResponseHeaderName:
         r = _rule(
             Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
         )
-        assert "WA356" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA356")
 
     def test_wa356_invalid_header_name_with_space(self):
         headers = [{"Name": "x bad header", "Value": "v"}]
         r = _rule(
             Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseHeaders": headers}}}
         )
-        assert "WA356" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA356")
 
 
 # ---------------------------------------------------------------------------
@@ -1735,7 +1724,7 @@ class TestCustomResponseBodyKey:
                 }
             }
         )
-        assert "WA357" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA357")
 
     def test_wa357_empty_key_warns(self):
         r = _rule(
@@ -1748,7 +1737,7 @@ class TestCustomResponseBodyKey:
                 }
             }
         )
-        assert "WA357" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA357")
 
 
 # ---------------------------------------------------------------------------
@@ -1767,7 +1756,7 @@ class TestCountManagedRuleGroup:
         )
         # Remove OverrideAction if present (not needed for Action-based rules)
         r.pop("OverrideAction", None)
-        assert "WA602" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA602")
 
     def test_wa602_override_action_count_managed_no_scope_down(self):
         """WA602 fires for OverrideAction: {Count: {}} on ManagedRuleGroupStatement."""
@@ -1783,7 +1772,7 @@ class TestCountManagedRuleGroup:
         r.pop("Action", None)
         r["OverrideAction"] = {"Count": {}}
         results = validate_rules([r])
-        assert "WA602" in _ids(results)
+        assert_lint(results, "WA602")
         wa602 = [x for x in results if x.rule_id == "WA602"]
         assert wa602[0].field == "OverrideAction"
 
@@ -1806,7 +1795,7 @@ class TestCountManagedRuleGroup:
             },
         )
         r.pop("OverrideAction", None)
-        assert "WA602" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA602")
 
 
 # ---------------------------------------------------------------------------
@@ -1817,16 +1806,16 @@ class TestPriorityGaps:
         a = _rule(ref="a", Priority=0)
         b = _rule(ref="b", Priority=1)
         b["VisibilityConfig"]["MetricName"] = "b"
-        assert "WA102" not in _ids(validate_rules([a, b]))
+        assert_no_lint(validate_rules([a, b]), "WA102")
 
     def test_wa102_gap_detected(self):
         a = _rule(ref="a", Priority=0)
         b = _rule(ref="b", Priority=5)
         b["VisibilityConfig"]["MetricName"] = "b"
-        assert "WA102" in _ids(validate_rules([a, b]))
+        assert_lint(validate_rules([a, b]), "WA102")
 
     def test_wa102_single_rule_no_warn(self):
-        assert "WA102" not in _ids(validate_rules([_rule(Priority=10)]))
+        assert_no_lint(validate_rules([_rule(Priority=10)]), "WA102")
 
     def test_wa102_fires_once_per_phase(self):
         a = _rule(ref="a", Priority=0)
@@ -1844,26 +1833,26 @@ class TestPriorityGaps:
 class TestRuleLabels:
     def test_wa154_aws_prefix(self):
         r = _rule(RuleLabels=[{"Name": "aws:managed:label"}])
-        assert "WA154" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA154")
 
     def test_wa154_awswaf_prefix(self):
         r = _rule(RuleLabels=[{"Name": "awswaf:managed:label"}])
-        assert "WA154" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA154")
 
     def test_wa154_custom_label_ok(self):
         r = _rule(RuleLabels=[{"Name": "custom:my-label"}])
-        assert "WA154" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA154")
 
     def test_wa154_no_labels_ok(self):
-        assert "WA154" not in _ids(validate_rules([_rule()]))
+        assert_no_lint(validate_rules([_rule()]), "WA154")
 
     def test_wa154_empty_labels_list_ok(self):
         r = _rule(RuleLabels=[])
-        assert "WA154" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA154")
 
     def test_wa154_non_dict_label_skipped(self):
         r = _rule(RuleLabels=["not-a-dict"])
-        assert "WA154" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA154")
 
 
 # ---------------------------------------------------------------------------
@@ -1888,12 +1877,12 @@ class TestManagedRuleGroupVersion:
         r = self._managed_rule()
         # Remove the Action key entirely so WA005 doesn't fire
         del r["Action"]
-        assert "WA156" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA156")
 
     def test_wa156_version_pinned_ok(self):
         r = self._managed_rule(Version="1.0")
         del r["Action"]
-        assert "WA156" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA156")
 
 
 # ---------------------------------------------------------------------------
@@ -1906,25 +1895,25 @@ class TestDisabledRule:
     def test_wa600_enabled_false(self):
         r = _rule(enabled=False)
         results = validate_rules([r])
-        assert "WA600" in _ids(results)
+        assert_lint(results, "WA600")
         wa600 = [x for x in results if x.rule_id == "WA600"]
         assert wa600[0].severity.name == "INFO"
         assert "disabled" in wa600[0].message
 
     def test_wa600_enabled_true_no_warning(self):
-        assert "WA600" not in _ids(validate_rules([_rule(enabled=True)]))
+        assert_no_lint(validate_rules([_rule(enabled=True)]), "WA600")
 
     def test_wa600_no_enabled_field(self):
         """Default rule (no enabled field) should not fire WA600."""
-        assert "WA600" not in _ids(validate_rules([_rule()]))
+        assert_no_lint(validate_rules([_rule()]), "WA600")
 
     def test_wa600_enabled_none(self):
         """enabled: null should not fire WA600 (only explicit False)."""
-        assert "WA600" not in _ids(validate_rules([_rule(enabled=None)]))
+        assert_no_lint(validate_rules([_rule(enabled=None)]), "WA600")
 
     def test_wa600_enabled_zero(self):
         """enabled: 0 is falsy but not 'is False' — should not fire."""
-        assert "WA600" not in _ids(validate_rules([_rule(enabled=0)]))
+        assert_no_lint(validate_rules([_rule(enabled=0)]), "WA600")
 
     def test_wa600_field_ref(self):
         """WA600 should include the ref and field in the result."""
@@ -1941,14 +1930,14 @@ class TestDisabledRule:
     def test_wa020_not_fired_for_enabled(self):
         """The 'enabled' field should be recognized, not flagged as unknown."""
         results = validate_rules([_rule(enabled=True)])
-        assert "WA020" not in _ids(results)
+        assert_no_lint(results, "WA020")
 
 
 class TestEdgeCases:
     def test_multiple_errors_same_rule(self):
         r = {"Priority": -1}
         results = validate_rules([r])
-        ids = _ids(results)
+        ids = [r.rule_id for r in results]
         assert "WA001" in ids
         assert "WA100" in ids
         assert "WA003" in ids
@@ -1959,18 +1948,18 @@ class TestEdgeCases:
         del r["Action"]
         r["OverrideAction"] = {"Count": {}}
         results = validate_rules([r])
-        assert "WA004" not in _ids(results)
-        assert "WA005" not in _ids(results)
+        assert_no_lint(results, "WA004")
+        assert_no_lint(results, "WA005")
 
     def test_no_statement_key_no_crash(self):
         r = _rule()
         del r["Statement"]
         results = validate_rules([r])
-        assert "WA300" not in _ids(results)
+        assert_no_lint(results, "WA300")
 
     def test_statement_not_dict(self):
         results = validate_rules([_rule(Statement="invalid")])
-        assert "WA300" not in _ids(results)
+        assert_no_lint(results, "WA300")
 
 
 # ---------------------------------------------------------------------------
@@ -1988,11 +1977,11 @@ class TestRegexValidation:
 
     def test_valid_regex_no_error(self):
         stmt = self._regex_stmt("^/api/v[0-9]+")
-        assert "WA319" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA319")
 
     def test_invalid_regex_fires(self):
         stmt = self._regex_stmt("(unclosed")
-        assert "WA319" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA319")
 
     def test_invalid_regex_bad_escape(self):
         stmt = self._regex_stmt("\\k")
@@ -2006,9 +1995,9 @@ class TestRegexValidation:
         try:
             re.compile("\\k")
         except re.error:
-            assert "WA319" in _ids(results)
+            assert_lint(results, "WA319")
         else:
-            assert "WA319" not in _ids(results)
+            assert_no_lint(results, "WA319")
 
     def test_missing_regex_string_no_fire(self):
         """No RegexString key → WA314 handles it, not WA319."""
@@ -2019,8 +2008,8 @@ class TestRegexValidation:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA314" in _ids(results)
-        assert "WA319" not in _ids(results)
+        assert_lint(results, "WA314")
+        assert_no_lint(results, "WA319")
 
     def test_error_message_includes_details(self):
         stmt = self._regex_stmt("(unclosed")
@@ -2052,7 +2041,7 @@ class TestRegexValidation:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA319" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA319")
 
     def test_recursive_in_not_statement(self):
         """WA319 fires recursively inside compound statements."""
@@ -2067,7 +2056,7 @@ class TestRegexValidation:
                 }
             }
         }
-        assert "WA319" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA319")
 
 
 # ---------------------------------------------------------------------------
@@ -2082,11 +2071,11 @@ class TestDoubleNegation:
                 }
             }
         }
-        assert "WA321" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA321")
 
     def test_single_not_no_fire(self):
         stmt = {"NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["CN"]}}}}
-        assert "WA321" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA321")
 
     def test_not_wrapping_other_no_fire(self):
         """NotStatement wrapping a non-NotStatement should not fire WA321."""
@@ -2102,7 +2091,7 @@ class TestDoubleNegation:
                 }
             }
         }
-        assert "WA321" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA321")
 
     def test_severity_is_warning(self):
         stmt = {
@@ -2159,7 +2148,7 @@ class TestDoubleNegation:
                 ]
             }
         }
-        assert "WA321" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA321")
 
 
 # ---------------------------------------------------------------------------
@@ -2178,12 +2167,12 @@ class TestSearchStringSize:
 
     def test_wa307_within_limit(self):
         stmt = self._byte_match_stmt("x" * 200)
-        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA307")
 
     def test_wa307_exceeds_limit(self):
         stmt = self._byte_match_stmt("x" * 201)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA307" in _ids(results)
+        assert_lint(results, "WA307")
         wa307 = [r for r in results if r.rule_id == "WA307"]
         assert "200-byte" in wa307[0].message
         assert "201 bytes" in wa307[0].message
@@ -2193,16 +2182,16 @@ class TestSearchStringSize:
         # e-acute = 2 bytes each; 101 * 2 = 202 bytes > 200
         stmt = self._byte_match_stmt("\u00e9" * 101)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA307" in _ids(results)
+        assert_lint(results, "WA307")
 
     def test_wa307_exactly_at_limit_multibyte(self):
         """100 two-byte chars = 200 bytes = exactly at limit."""
         stmt = self._byte_match_stmt("\u00e9" * 100)
-        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA307")
 
     def test_wa307_short_string(self):
         stmt = self._byte_match_stmt("bad")
-        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA307")
 
     def test_wa307_missing_search_string_no_crash(self):
         """Missing SearchString is caught by WA312, not WA307."""
@@ -2214,8 +2203,8 @@ class TestSearchStringSize:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA312" in _ids(results)
-        assert "WA307" not in _ids(results)
+        assert_lint(results, "WA312")
+        assert_no_lint(results, "WA307")
 
     def test_wa307_non_string_search_string_no_crash(self):
         """Non-string SearchString should not fire WA307."""
@@ -2227,7 +2216,7 @@ class TestSearchStringSize:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA307" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA307")
 
     def test_wa307_field_is_set(self):
         stmt = self._byte_match_stmt("x" * 201)
@@ -2249,7 +2238,7 @@ class TestSearchStringSize:
                 }
             }
         }
-        assert "WA307" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA307")
 
 
 # ---------------------------------------------------------------------------
@@ -2265,7 +2254,7 @@ class TestEmptySearchString:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA328" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA328")
 
     def test_wa328_non_empty_ok(self):
         stmt = {
@@ -2276,7 +2265,7 @@ class TestEmptySearchString:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA328" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA328")
 
 
 # ---------------------------------------------------------------------------
@@ -2294,12 +2283,12 @@ class TestRegexStringSize:
 
     def test_wa308_within_limit(self):
         stmt = self._regex_stmt("x" * 512)
-        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA308")
 
     def test_wa308_exceeds_limit(self):
         stmt = self._regex_stmt("x" * 513)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA308" in _ids(results)
+        assert_lint(results, "WA308")
         wa308 = [r for r in results if r.rule_id == "WA308"]
         assert "512-byte" in wa308[0].message
         assert "513 bytes" in wa308[0].message
@@ -2309,16 +2298,16 @@ class TestRegexStringSize:
         # 257 two-byte chars = 514 bytes > 512
         stmt = self._regex_stmt("\u00e9" * 257)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA308" in _ids(results)
+        assert_lint(results, "WA308")
 
     def test_wa308_exactly_at_limit_multibyte(self):
         """256 two-byte chars = 512 bytes = exactly at limit."""
         stmt = self._regex_stmt("\u00e9" * 256)
-        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA308")
 
     def test_wa308_short_regex(self):
         stmt = self._regex_stmt("^/api/.*")
-        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA308")
 
     def test_wa308_missing_regex_string_no_crash(self):
         """Missing RegexString is caught by WA314, not WA308."""
@@ -2329,8 +2318,8 @@ class TestRegexStringSize:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA314" in _ids(results)
-        assert "WA308" not in _ids(results)
+        assert_lint(results, "WA314")
+        assert_no_lint(results, "WA308")
 
     def test_wa308_non_string_regex_no_crash(self):
         """Non-string RegexString should not fire WA308."""
@@ -2341,7 +2330,7 @@ class TestRegexStringSize:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA308" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA308")
 
     def test_wa308_field_is_set(self):
         stmt = self._regex_stmt("x" * 513)
@@ -2365,7 +2354,7 @@ class TestRegexStringSize:
                 ]
             }
         }
-        assert "WA308" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA308")
 
 
 # ---------------------------------------------------------------------------
@@ -2375,7 +2364,7 @@ class TestRateBasedNoScopeDown:
     def test_wa309_no_scope_down(self):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA309" in _ids(results)
+        assert_lint(results, "WA309")
         wa309 = [r for r in results if r.rule_id == "WA309"]
         assert "rate-limits all traffic" in wa309[0].message
 
@@ -2394,7 +2383,7 @@ class TestRateBasedNoScopeDown:
                 },
             }
         }
-        assert "WA309" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA309")
 
     def test_wa309_severity_is_warning(self):
         stmt = {"RateBasedStatement": {"Limit": 200, "AggregateKeyType": "IP"}}
@@ -2418,7 +2407,7 @@ class TestRateBasedNoScopeDown:
         """Non-dict RateBasedStatement should not crash WA309."""
         stmt = {"RateBasedStatement": "invalid"}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA309" not in _ids(results)
+        assert_no_lint(results, "WA309")
 
 
 # ---------------------------------------------------------------------------
@@ -2440,7 +2429,7 @@ class TestFieldToMatchIncompatible:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_jsonbody_on_regex_match_ok(self):
         """JsonBody is valid on RegexMatchStatement."""
@@ -2456,7 +2445,7 @@ class TestFieldToMatchIncompatible:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_jsonbody_on_size_constraint_ok(self):
         """JsonBody is valid on SizeConstraintStatement."""
@@ -2473,7 +2462,7 @@ class TestFieldToMatchIncompatible:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_jsonbody_on_sqli_ok(self):
         """JsonBody is valid on SqliMatchStatement."""
@@ -2488,7 +2477,7 @@ class TestFieldToMatchIncompatible:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_jsonbody_on_xss_ok(self):
         """JsonBody is valid on XssMatchStatement."""
@@ -2503,7 +2492,7 @@ class TestFieldToMatchIncompatible:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_jsonbody_on_label_match_fires(self):
         """JsonBody on LabelMatchStatement should fire WA320 -- LabelMatchStatement
@@ -2521,7 +2510,7 @@ class TestFieldToMatchIncompatible:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA320" in _ids(results)
+        assert_lint(results, "WA320")
         wa320 = [r for r in results if r.rule_id == "WA320"]
         assert "JsonBody" in wa320[0].message
         assert "LabelMatchStatement" in wa320[0].message
@@ -2569,7 +2558,7 @@ class TestFieldToMatchIncompatible:
                 "FieldToMatch": {"UriPath": {}},
             }
         }
-        assert "WA320" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
     def test_wa320_recursive_in_compound(self):
         """WA320 fires recursively inside compound statements."""
@@ -2592,7 +2581,7 @@ class TestFieldToMatchIncompatible:
                 ]
             }
         }
-        assert "WA320" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA320")
 
 
 # ---------------------------------------------------------------------------
@@ -2602,20 +2591,20 @@ class TestGeoMatchCountLimit:
     def test_wa323_exactly_50_ok(self):
         codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(50)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
-        assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA323")
 
     def test_wa323_exceeds_50(self):
         codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(51)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA323" in _ids(results)
+        assert_lint(results, "WA323")
         wa323 = [r for r in results if r.rule_id == "WA323"]
         assert "51" in wa323[0].message
         assert "50" in wa323[0].message
 
     def test_wa323_empty_ok(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": []}}
-        assert "WA323" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA323")
 
     def test_wa323_field_is_set(self):
         codes = [chr(65 + i // 26) + chr(65 + i % 26) for i in range(51)]
@@ -2641,13 +2630,13 @@ class TestCustomKeysLimit:
     def test_wa324_exactly_5_ok(self):
         keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(5)]
         stmt = self._rate_stmt(keys)
-        assert "WA324" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA324")
 
     def test_wa324_exceeds_5(self):
         keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(6)]
         stmt = self._rate_stmt(keys)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA324" in _ids(results)
+        assert_lint(results, "WA324")
         wa324 = [r for r in results if r.rule_id == "WA324"]
         assert "6" in wa324[0].message
 
@@ -2655,8 +2644,8 @@ class TestCustomKeysLimit:
         """Empty CustomKeys triggers WA318, not WA324."""
         stmt = self._rate_stmt([])
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA318" in _ids(results)
-        assert "WA324" not in _ids(results)
+        assert_lint(results, "WA318")
+        assert_no_lint(results, "WA324")
 
     def test_wa324_field_is_set(self):
         keys = [{"Header": {"Name": f"x-key-{i}"}} for i in range(6)]
@@ -2705,13 +2694,13 @@ class TestMatchPatternLimit:
     def test_wa325_headers_included_5_ok(self):
         mp = {"IncludedHeaders": ["a", "b", "c", "d", "e"]}
         stmt = self._byte_match_with_headers(mp)
-        assert "WA325" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA325")
 
     def test_wa325_headers_included_exceeds(self):
         mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
         stmt = self._byte_match_with_headers(mp)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA325" in _ids(results)
+        assert_lint(results, "WA325")
         wa325 = [r for r in results if r.rule_id == "WA325"]
         assert "IncludedHeaders" in wa325[0].message
         assert "6" in wa325[0].message
@@ -2720,7 +2709,7 @@ class TestMatchPatternLimit:
         mp = {"ExcludedHeaders": ["a", "b", "c", "d", "e", "f"]}
         stmt = self._byte_match_with_headers(mp)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA325" in _ids(results)
+        assert_lint(results, "WA325")
         wa325 = [r for r in results if r.rule_id == "WA325"]
         assert "ExcludedHeaders" in wa325[0].message
 
@@ -2728,7 +2717,7 @@ class TestMatchPatternLimit:
         mp = {"IncludedCookies": ["a", "b", "c", "d", "e", "f"]}
         stmt = self._byte_match_with_cookies(mp)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA325" in _ids(results)
+        assert_lint(results, "WA325")
         wa325 = [r for r in results if r.rule_id == "WA325"]
         assert "IncludedCookies" in wa325[0].message
 
@@ -2736,7 +2725,7 @@ class TestMatchPatternLimit:
         mp = {"ExcludedCookies": ["a", "b", "c", "d", "e", "f"]}
         stmt = self._byte_match_with_cookies(mp)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA325" in _ids(results)
+        assert_lint(results, "WA325")
 
     def test_wa325_headers_no_match_pattern_no_crash(self):
         """Headers without MatchPattern should not crash."""
@@ -2748,7 +2737,7 @@ class TestMatchPatternLimit:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA325" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA325")
 
     def test_wa325_field_is_set(self):
         mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
@@ -2775,19 +2764,19 @@ class TestTextTransformationsLimit:
 
     def test_wa331_exactly_10_ok(self):
         stmt = self._stmt_with_transforms(10)
-        assert "WA331" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA331")
 
     def test_wa331_exceeds_10(self):
         stmt = self._stmt_with_transforms(11)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA331" in _ids(results)
+        assert_lint(results, "WA331")
         wa331 = [r for r in results if r.rule_id == "WA331"]
         assert "11" in wa331[0].message
         assert "10" in wa331[0].message
 
     def test_wa331_1_ok(self):
         stmt = self._stmt_with_transforms(1)
-        assert "WA331" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA331")
 
     def test_wa331_field_is_set(self):
         stmt = self._stmt_with_transforms(11)
@@ -2813,7 +2802,7 @@ class TestTextTransformationDuplicatePriority:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA332" in _ids(results)
+        assert_lint(results, "WA332")
         wa332 = [r for r in results if r.rule_id == "WA332"]
         assert "Priority 0" in wa332[0].message
 
@@ -2829,7 +2818,7 @@ class TestTextTransformationDuplicatePriority:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA332" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA332")
 
     def test_wa332_fires_once_per_duplicate(self):
         """Three transforms with same priority should fire once (at the second occurrence)."""
@@ -2883,22 +2872,22 @@ class TestSizeConstraintNonNegative:
     def test_wa334_negative_size(self):
         stmt = self._size_stmt(-1)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA334" in _ids(results)
+        assert_lint(results, "WA334")
         wa334 = [r for r in results if r.rule_id == "WA334"]
         assert "-1" in wa334[0].message
 
     def test_wa334_zero_ok(self):
         stmt = self._size_stmt(0)
-        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA334")
 
     def test_wa334_positive_ok(self):
         stmt = self._size_stmt(8192)
-        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA334")
 
     def test_wa334_non_int_no_fire(self):
         """Non-integer Size should not fire WA334 (type issues are separate)."""
         stmt = self._size_stmt("100")
-        assert "WA334" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA334")
 
     def test_wa334_field_is_set(self):
         stmt = self._size_stmt(-5)
@@ -2929,12 +2918,12 @@ class TestJsonBodyMatchScope:
     @pytest.mark.parametrize("val", ["ALL", "KEY", "VALUE"])
     def test_wa335_valid(self, val):
         stmt = self._json_body_stmt(val)
-        assert "WA335" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA335")
 
     def test_wa335_invalid(self):
         stmt = self._json_body_stmt("KEYS")
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA335" in _ids(results)
+        assert_lint(results, "WA335")
         wa335 = [r for r in results if r.rule_id == "WA335"]
         assert "KEYS" in wa335[0].message
 
@@ -2953,7 +2942,7 @@ class TestJsonBodyMatchScope:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA335" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA335")
 
     def test_wa335_field_is_set(self):
         stmt = self._json_body_stmt("INVALID")
@@ -2990,12 +2979,12 @@ class TestJsonBodyFallbackBehavior:
     @pytest.mark.parametrize("val", ["MATCH", "NO_MATCH", "EVALUATE_AS_STRING"])
     def test_wa336_valid(self, val):
         stmt = self._json_body_stmt(val)
-        assert "WA336" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA336")
 
     def test_wa336_invalid(self):
         stmt = self._json_body_stmt("IGNORE")
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA336" in _ids(results)
+        assert_lint(results, "WA336")
         wa336 = [r for r in results if r.rule_id == "WA336"]
         assert "IGNORE" in wa336[0].message
 
@@ -3014,7 +3003,7 @@ class TestJsonBodyFallbackBehavior:
                 "PositionalConstraint": "CONTAINS",
             }
         }
-        assert "WA336" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA336")
 
     def test_wa336_field_is_set(self):
         stmt = self._json_body_stmt("BAD")
@@ -3037,24 +3026,24 @@ class TestGeoAlwaysTrue:
         """GeoMatch with >= 200 codes triggers WA341."""
         codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(200)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
-        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA341")
 
     def test_wa341_249_country_codes(self):
         """GeoMatch with 249 codes (all countries) triggers WA341."""
         codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(249)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
-        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA341")
 
     def test_wa341_199_country_codes_no_warn(self):
         """GeoMatch with < 200 codes does NOT trigger WA341."""
         codes = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(199)]
         stmt = {"GeoMatchStatement": {"CountryCodes": codes}}
-        assert "WA341" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA341")
 
     def test_wa341_small_set_no_warn(self):
         """GeoMatch with a few codes does NOT trigger WA341."""
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "CA", "GB"]}}
-        assert "WA341" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA341")
 
     def test_wa341_nested_in_and(self):
         """WA341 fires for GeoMatch nested in AndStatement."""
@@ -3067,7 +3056,7 @@ class TestGeoAlwaysTrue:
                 ]
             }
         }
-        assert "WA341" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA341")
 
     def test_wa341_nested_in_and_no_duplicate(self):
         """WA341 fires exactly once for GeoMatch nested in AndStatement (no double-visit)."""
@@ -3099,7 +3088,7 @@ class TestContradictoryGeo:
                 ]
             }
         }
-        assert "WA342" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA342")
 
     def test_wa342_overlapping_sets_no_warn(self):
         """AND with overlapping GeoMatch sets does NOT trigger WA342."""
@@ -3111,7 +3100,7 @@ class TestContradictoryGeo:
                 ]
             }
         }
-        assert "WA342" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA342")
 
     def test_wa342_single_geo_no_warn(self):
         """AND with only one GeoMatch does NOT trigger WA342."""
@@ -3123,7 +3112,7 @@ class TestContradictoryGeo:
                 ]
             }
         }
-        assert "WA342" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA342")
 
     def test_wa342_fires_once_for_triple(self):
         """Three contradictory GeoMatch sets produce only one WA342."""
@@ -3157,7 +3146,7 @@ class TestContradictoryGeo:
                 ]
             }
         }
-        assert "WA342" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA342")
 
 
 # ---------------------------------------------------------------------------
@@ -3174,7 +3163,7 @@ class TestAlwaysFalse:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA343")
 
     def test_wa343_size_zero_eq_no_warn(self):
         """SizeConstraint with Size=0 and EQ does NOT trigger WA343."""
@@ -3186,7 +3175,7 @@ class TestAlwaysFalse:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA343" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA343")
 
     def test_wa343_size_nonzero_lt_no_warn(self):
         """SizeConstraint with Size=1 and LT does NOT trigger WA343."""
@@ -3198,7 +3187,7 @@ class TestAlwaysFalse:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        assert "WA343" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA343")
 
     def test_wa343_nested_in_not(self):
         """WA343 fires for SizeConstraint nested in NotStatement."""
@@ -3214,7 +3203,7 @@ class TestAlwaysFalse:
                 }
             }
         }
-        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA343")
 
     def test_wa343_nested_in_rate_based(self):
         """WA343 fires for SizeConstraint in RateBasedStatement ScopeDown."""
@@ -3232,7 +3221,7 @@ class TestAlwaysFalse:
                 },
             }
         }
-        assert "WA343" in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA343")
 
 
 # ---------------------------------------------------------------------------
@@ -3253,14 +3242,14 @@ class TestNestingDepth:
 
         stmt = self._deeply_nested(_MAX_NESTING_DEPTH + 1)
         rule = _rule(Statement=stmt)
-        ids = _ids(validate_rules([rule]))
+        ids = [r.rule_id for r in validate_rules([rule])]
         assert "WA330" in ids
 
     def test_normal_nesting_ok(self):
         # 3 levels of nesting should be fine
         stmt = self._deeply_nested(3)
         rule = _rule(Statement=stmt)
-        ids = _ids(validate_rules([rule]))
+        ids = [r.rule_id for r in validate_rules([rule])]
         assert "WA330" not in ids
 
 
@@ -3502,26 +3491,26 @@ class TestExcludedRulesValidation:
 
     def test_wa157_excluded_rules_not_list(self):
         r = self._managed_rule(ExcludedRules="not-a-list")
-        assert "WA157" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA157")
 
     def test_wa157_excluded_rules_entry_not_dict(self):
         r = self._managed_rule(ExcludedRules=["bare-string"])
-        assert "WA157" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA157")
 
     def test_wa157_excluded_rules_entry_missing_name(self):
         r = self._managed_rule(ExcludedRules=[{}])
-        assert "WA157" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA157")
 
     def test_wa157_excluded_rules_name_not_string(self):
         r = self._managed_rule(ExcludedRules=[{"Name": 123}])
-        assert "WA157" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA157")
 
     def test_wa157_valid_excluded_rules(self):
         r = self._managed_rule(
             ExcludedRules=[{"Name": "SizeRestrictions_BODY"}],
             RuleActionOverrides=[{"Name": "NoUserAgent_HEADER", "ActionToUse": {"Count": {}}}],
         )
-        assert "WA157" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA157")
 
     def test_wa157_multiple_invalid_entries(self):
         r = self._managed_rule(ExcludedRules=[42, {"Name": True}])
@@ -3533,7 +3522,7 @@ class TestExcludedRulesValidation:
             ExcludedRules=[],
             RuleActionOverrides=[{"Name": "NoUserAgent_HEADER", "ActionToUse": {"Count": {}}}],
         )
-        assert "WA157" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA157")
 
 
 # ---------------------------------------------------------------------------
@@ -3554,29 +3543,29 @@ class TestRuleActionOverridesValidation:
 
     def test_wa159_entry_not_dict(self):
         r = self._managed_rule(RuleActionOverrides=["bare-string"])
-        assert "WA159" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA159")
 
     def test_wa159_entry_missing_name(self):
         r = self._managed_rule(RuleActionOverrides=[{"ActionToUse": {"Count": {}}}])
-        assert "WA159" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA159")
 
     def test_wa159_entry_missing_action_to_use(self):
         r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule"}])
-        assert "WA159" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA159")
 
     def test_wa159_entry_name_not_string(self):
         r = self._managed_rule(RuleActionOverrides=[{"Name": 42, "ActionToUse": {"Count": {}}}])
-        assert "WA159" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA159")
 
     def test_wa159_entry_action_to_use_not_dict(self):
         r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": "Count"}])
-        assert "WA159" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA159")
 
     def test_wa159_valid_entry(self):
         r = self._managed_rule(
             RuleActionOverrides=[{"Name": "SizeRestrictions_BODY", "ActionToUse": {"Count": {}}}]
         )
-        assert "WA159" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA159")
 
     def test_wa159_multiple_entries_one_bad(self):
         r = self._managed_rule(
@@ -3616,24 +3605,24 @@ class TestRuleActionOverridesInvalidAction:
         r = self._managed_rule(
             RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Invalid": {}}}]
         )
-        assert "WA160" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA160")
 
     def test_wa160_empty_action_to_use(self):
         r = self._managed_rule(RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {}}])
-        assert "WA160" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA160")
 
     def test_wa160_multiple_actions_in_action_to_use(self):
         r = self._managed_rule(
             RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Count": {}, "Block": {}}}]
         )
-        assert "WA160" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA160")
 
     @pytest.mark.parametrize("action", ["Allow", "Block", "Count", "Captcha", "Challenge"])
     def test_wa160_all_valid_actions(self, action):
         r = self._managed_rule(
             RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {action: {}}}]
         )
-        assert "WA160" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA160")
 
 
 # ---------------------------------------------------------------------------
@@ -3654,18 +3643,18 @@ class TestDeprecatedExcludedRules:
 
     def test_wa161_excluded_rules_without_overrides(self):
         r = self._managed_rule(ExcludedRules=[{"Name": "SomeRule"}])
-        assert "WA161" in _ids(validate_rules([r]))
+        assert_lint(validate_rules([r]), "WA161")
 
     def test_wa161_excluded_rules_with_overrides(self):
         r = self._managed_rule(
             ExcludedRules=[{"Name": "SomeRule"}],
             RuleActionOverrides=[{"Name": "SomeRule", "ActionToUse": {"Count": {}}}],
         )
-        assert "WA161" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA161")
 
     def test_wa161_no_excluded_rules(self):
         r = self._managed_rule()
-        assert "WA161" not in _ids(validate_rules([r]))
+        assert_no_lint(validate_rules([r]), "WA161")
 
     def test_wa161_suggestion_present(self):
         r = self._managed_rule(ExcludedRules=[{"Name": "SomeRule"}])
@@ -3733,13 +3722,13 @@ class TestCustomKeyTypes:
     def test_wa337_valid_key_types(self, key_type):
         keys = [{key_type: {"Name": "test"}}] if key_type != "IP" else [{key_type: {}}]
         stmt = self._rate_stmt(keys)
-        assert "WA337" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA337")
 
     def test_wa337_invalid_key_type(self):
         keys = [{"InvalidType": {"Name": "test"}}]
         stmt = self._rate_stmt(keys)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA337" in _ids(results)
+        assert_lint(results, "WA337")
         wa337 = [r for r in results if r.rule_id == "WA337"]
         assert "InvalidType" in wa337[0].message
 
@@ -3756,14 +3745,14 @@ class TestCustomKeyTypes:
         keys = ["not-a-dict", {"Header": {"Name": "x"}}]
         stmt = self._rate_stmt(keys)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA337" not in _ids(results)
+        assert_no_lint(results, "WA337")
 
     def test_wa337_multi_key_entry_skipped(self):
         """Entries with != 1 key are skipped by WA337 (other rules may catch them)."""
         keys = [{"Header": {"Name": "x"}, "IP": {}}]
         stmt = self._rate_stmt(keys)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA337" not in _ids(results)
+        assert_no_lint(results, "WA337")
 
     def test_wa337_field_is_set(self):
         keys = [{"Header": {"Name": "x"}}, {"BadKey": {}}]
@@ -3798,12 +3787,12 @@ class TestOversizeHandling:
     @pytest.mark.parametrize("val", ["CONTINUE", "MATCH", "NO_MATCH"])
     def test_wa338_valid_oversize_handling(self, val):
         stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": val})
-        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA338")
 
     def test_wa338_invalid_oversize_handling_body(self):
         stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": "REJECT"})
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA338" in _ids(results)
+        assert_lint(results, "WA338")
         wa338 = [r for r in results if r.rule_id == "WA338"]
         assert "REJECT" in wa338[0].message
         assert "Body.OversizeHandling" in wa338[0].field
@@ -3818,7 +3807,7 @@ class TestOversizeHandling:
             },
         )
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA338" in _ids(results)
+        assert_lint(results, "WA338")
         wa338 = [r for r in results if r.rule_id == "WA338"]
         assert "Headers.OversizeHandling" in wa338[0].field
 
@@ -3832,12 +3821,12 @@ class TestOversizeHandling:
             },
         )
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA338" in _ids(results)
+        assert_lint(results, "WA338")
 
     def test_wa338_invalid_oversize_handling_header_order(self):
         stmt = self._byte_match_with_ftm("HeaderOrder", {"OversizeHandling": "WRONG"})
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA338" in _ids(results)
+        assert_lint(results, "WA338")
         wa338 = [r for r in results if r.rule_id == "WA338"]
         assert "HeaderOrder.OversizeHandling" in wa338[0].field
 
@@ -3851,19 +3840,19 @@ class TestOversizeHandling:
             },
         )
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA338" in _ids(results)
+        assert_lint(results, "WA338")
         wa338 = [r for r in results if r.rule_id == "WA338"]
         assert "JsonBody.OversizeHandling" in wa338[0].field
 
     def test_wa338_absent_oversize_handling_no_fire(self):
         """OversizeHandling is optional -- absence should not fire WA338."""
         stmt = self._byte_match_with_ftm("Body", {})
-        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA338")
 
     def test_wa338_non_string_oversize_handling_no_fire(self):
         """Non-string OversizeHandling should not fire WA338."""
         stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": 42})
-        assert "WA338" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA338")
 
     def test_wa338_suggestion(self):
         stmt = self._byte_match_with_ftm("Body", {"OversizeHandling": "BAD"})
@@ -3890,14 +3879,14 @@ class TestFallbackBehavior:
     @pytest.mark.parametrize("val", ["MATCH", "NO_MATCH"])
     def test_wa339_valid_fallback_behavior(self, val):
         stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": val})
-        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA339")
 
     def test_wa339_invalid_fallback_ja3(self):
         stmt = self._byte_match_with_ftm(
             "JA3Fingerprint", {"FallbackBehavior": "EVALUATE_AS_STRING"}
         )
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA339" in _ids(results)
+        assert_lint(results, "WA339")
         wa339 = [r for r in results if r.rule_id == "WA339"]
         assert "EVALUATE_AS_STRING" in wa339[0].message
         assert "JA3Fingerprint.FallbackBehavior" in wa339[0].field
@@ -3905,26 +3894,26 @@ class TestFallbackBehavior:
     def test_wa339_invalid_fallback_ja4(self):
         stmt = self._byte_match_with_ftm("JA4Fingerprint", {"FallbackBehavior": "IGNORE"})
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA339" in _ids(results)
+        assert_lint(results, "WA339")
         wa339 = [r for r in results if r.rule_id == "WA339"]
         assert "JA4Fingerprint.FallbackBehavior" in wa339[0].field
 
     def test_wa339_invalid_fallback_uri_fragment(self):
         stmt = self._byte_match_with_ftm("UriFragment", {"FallbackBehavior": "DROP"})
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA339" in _ids(results)
+        assert_lint(results, "WA339")
         wa339 = [r for r in results if r.rule_id == "WA339"]
         assert "UriFragment.FallbackBehavior" in wa339[0].field
 
     def test_wa339_absent_fallback_no_fire(self):
         """FallbackBehavior is optional -- absence should not fire WA339."""
         stmt = self._byte_match_with_ftm("JA3Fingerprint", {})
-        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA339")
 
     def test_wa339_non_string_fallback_no_fire(self):
         """Non-string FallbackBehavior should not fire WA339."""
         stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": 42})
-        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA339")
 
     def test_wa339_forwarded_ip_config_invalid_fallback(self):
         """FallbackBehavior in ForwardedIPConfig at RateBasedStatement level."""
@@ -3939,7 +3928,7 @@ class TestFallbackBehavior:
             }
         }
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA339" in _ids(results)
+        assert_lint(results, "WA339")
         wa339 = [r for r in results if r.rule_id == "WA339"]
         assert "ForwardedIPConfig.FallbackBehavior" in wa339[0].field
 
@@ -3955,7 +3944,7 @@ class TestFallbackBehavior:
                 },
             }
         }
-        assert "WA339" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA339")
 
     def test_wa339_suggestion(self):
         stmt = self._byte_match_with_ftm("JA3Fingerprint", {"FallbackBehavior": "BAD"})
@@ -3981,12 +3970,12 @@ class TestEvaluationWindowSec:
     @pytest.mark.parametrize("val", [60, 120, 300, 600])
     def test_wa303_valid_evaluation_window(self, val):
         stmt = self._rate_stmt(EvaluationWindowSec=val)
-        assert "WA303" not in _ids(validate_rules([_rule(Statement=stmt)]))
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA303")
 
     def test_wa303_invalid_evaluation_window(self):
         stmt = self._rate_stmt(EvaluationWindowSec=180)
         results = validate_rules([_rule(Statement=stmt)])
-        assert "WA303" in _ids(results)
+        assert_lint(results, "WA303")
         wa303 = [r for r in results if r.rule_id == "WA303"]
         eval_window_results = [r for r in wa303 if "EvaluationWindowSec" in r.field]
         assert len(eval_window_results) == 1
