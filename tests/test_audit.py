@@ -1,68 +1,11 @@
-"""Tests for the AWS WAF audit IP extractor."""
+"""Tests for the AWS WAF audit IP extractor.
 
-from octorules_aws.audit import _collect_ipset_arns, _extract_ips
+The underlying ``collect_ipset_arns`` is shared with ``_statement_util`` and
+fully covered there (``tests/test_statement_util.py``). This module focuses
+on ``_extract_ips`` which composes ARN collection with rule-walking.
+"""
 
-
-class TestCollectIPSetARNs:
-    def test_direct_ipset(self):
-        stmt = {
-            "IPSetReferenceStatement": {
-                "ARN": "arn:aws:wafv2:us-east-1:123456789012:regional/ipset/my-ipset/abc123"
-            }
-        }
-        arns = _collect_ipset_arns(stmt)
-        assert len(arns) == 1
-        assert "my-ipset" in arns[0]
-
-    def test_nested_and(self):
-        stmt = {
-            "AndStatement": {
-                "Statements": [
-                    {
-                        "IPSetReferenceStatement": {
-                            "ARN": "arn:aws:wafv2:us-east-1:123:regional/ipset/set1/id1"
-                        }
-                    },
-                    {
-                        "IPSetReferenceStatement": {
-                            "ARN": "arn:aws:wafv2:us-east-1:123:regional/ipset/set2/id2"
-                        }
-                    },
-                ]
-            }
-        }
-        arns = _collect_ipset_arns(stmt)
-        assert len(arns) == 2
-
-    def test_nested_not(self):
-        stmt = {
-            "NotStatement": {
-                "Statement": {
-                    "IPSetReferenceStatement": {
-                        "ARN": "arn:aws:wafv2:us-east-1:123:regional/ipset/blocked/id"
-                    }
-                }
-            }
-        }
-        arns = _collect_ipset_arns(stmt)
-        assert len(arns) == 1
-
-    def test_rate_based_scope_down(self):
-        stmt = {
-            "RateBasedStatement": {
-                "ScopeDownStatement": {
-                    "IPSetReferenceStatement": {
-                        "ARN": "arn:aws:wafv2:us-east-1:123:regional/ipset/rateip/id"
-                    }
-                }
-            }
-        }
-        arns = _collect_ipset_arns(stmt)
-        assert len(arns) == 1
-
-    def test_no_ipset(self):
-        stmt = {"ByteMatchStatement": {"FieldToMatch": {"UriPath": {}}}}
-        assert _collect_ipset_arns(stmt) == []
+from octorules_aws.audit import _extract_ips
 
 
 class TestAWSExtractIPs:

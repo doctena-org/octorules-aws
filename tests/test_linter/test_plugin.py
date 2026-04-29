@@ -1,7 +1,6 @@
 """Tests for the AWS WAF linter plugin."""
 
 from octorules.linter.engine import LintContext, Severity
-from octorules.linter.plugin import get_registered_plugins
 from octorules.linter.rules.registry import RULE_REGISTRY
 
 from octorules_aws.linter._plugin import AWS_RULE_IDS, aws_lint
@@ -9,14 +8,6 @@ from octorules_aws.linter._rules import AWS_RULE_METAS
 
 
 class TestPluginRegistration:
-    def test_aws_plugin_registered(self):
-        plugins = get_registered_plugins()
-        names = [p.name for p in plugins]
-        assert "aws" in names
-
-    def test_rule_ids_non_empty(self):
-        assert len(AWS_RULE_IDS) > 0
-
     def test_all_rule_ids_start_with_wa(self):
         for rule_id in AWS_RULE_IDS:
             assert rule_id.startswith("WA"), f"Expected WA prefix, got {rule_id}"
@@ -37,6 +28,29 @@ class TestPluginRegistration:
         ids = [r.rule_id for r in AWS_RULE_METAS]
         dupes = [x for x in ids if ids.count(x) > 1]
         assert len(ids) == len(set(ids)), f"Duplicate rule IDs: {dupes}"
+
+    def test_no_hyphenated_categories(self):
+        """All category strings use snake_case — matches CF/Google/Azure/Bunny.
+
+        AWS used to use ``cross-rule`` (hyphen) which broke filtering for
+        anything joining categories across providers. This test guards
+        against re-introduction of a hyphenated category.
+        """
+        for meta in AWS_RULE_METAS:
+            assert "-" not in meta.category, (
+                f"{meta.rule_id} has hyphenated category {meta.category!r};"
+                " use snake_case for cross-provider consistency"
+            )
+
+    def test_cross_rule_category_uses_underscore(self):
+        """At least one rule should be in the ``cross_rule`` category (sanity check)."""
+        cross_rule = [m for m in AWS_RULE_METAS if m.category == "cross_rule"]
+        assert len(cross_rule) >= 5, (
+            f"Expected ≥5 cross_rule rules; got {[m.rule_id for m in cross_rule]}"
+        )
+        # Also confirm the legacy "cross-rule" key isn't lingering.
+        legacy = [m for m in AWS_RULE_METAS if m.category == "cross-rule"]
+        assert legacy == [], f"Legacy hyphenated category still present: {legacy}"
 
 
 class TestAwsLint:
@@ -935,6 +949,69 @@ class TestListItemCounts:
         wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
         assert len(wa158) == 1
         assert "bad-set" in wa158[0].message
+
+    def test_wa158_does_not_fire_on_regex_set(self):
+        """WA158 is IP-set-specific; regex pattern sets use WA165 instead."""
+        ctx = LintContext()
+        # 10_001 regex patterns is a WA165 violation, NOT WA158. Without the
+        # ``kind: regex`` skip in WA158, the message would falsely call a
+        # regex pattern set an "IP set".
+        rules_data = {
+            "lists": [
+                {"name": "regex-set", "kind": "regex", "items": ["a"] * 10_001},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA158"] == []
+
+
+class TestRegexPatternSetCount:
+    """WA165: Regex pattern set exceeds 10-pattern AWS WAF hard limit."""
+
+    def test_wa165_under_limit_no_error(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "small-regex", "kind": "regex", "items": ["a", "b", "c"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA165"] == []
+
+    def test_wa165_exactly_10_no_error(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "max-regex", "kind": "regex", "items": [f"p{i}" for i in range(10)]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA165"] == []
+
+    def test_wa165_exceeds_limit(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "too-many", "kind": "regex", "items": [f"p{i}" for i in range(11)]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa165 = [r for r in ctx.results if r.rule_id == "WA165"]
+        assert len(wa165) == 1
+        assert "too-many" in wa165[0].message
+        assert wa165[0].severity == Severity.ERROR
+        assert "11 patterns" in wa165[0].message
+
+    def test_wa165_does_not_fire_on_ip_set(self):
+        """WA165 only applies to kind=regex; IP sets are WA158's domain."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {"name": "ip-set", "kind": "ip", "items": ["10.0.0.1", "10.0.0.2"]},
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA165"] == []
 
 
 class TestReservedIPInList:

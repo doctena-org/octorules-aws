@@ -157,27 +157,32 @@ WA357 = RuleMeta("WA357", "action", "CustomResponseBodyKey is empty", Severity.W
 
 # WA520: Cross-rule analysis
 WA520 = RuleMeta(
-    "WA520", "cross-rule", "Duplicate statement across rules in phase", Severity.WARNING
+    "WA520", "cross_rule", "Duplicate statement across rules in phase", Severity.WARNING
 )
 
 # WA158: IP set item count limit
-WA158 = RuleMeta("WA158", "cross-rule", "IP set exceeds 10,000 address limit", Severity.WARNING)
+WA158 = RuleMeta("WA158", "cross_rule", "IP set exceeds 10,000 address limit", Severity.WARNING)
+
+# WA165: Regex pattern set item count limit
+WA165 = RuleMeta(
+    "WA165", "cross_rule", "Regex pattern set exceeds 10-pattern limit", Severity.ERROR
+)
 
 # WA162: Reserved/bogon IP in IP set
-WA162 = RuleMeta("WA162", "cross-rule", "Reserved/bogon IP address in IP set", Severity.WARNING)
+WA162 = RuleMeta("WA162", "cross_rule", "Reserved/bogon IP address in IP set", Severity.WARNING)
 
 # WA163: Catch-all CIDR in IP set
 WA163 = RuleMeta(
-    "WA163", "cross-rule", "Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set", Severity.WARNING
+    "WA163", "cross_rule", "Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set", Severity.WARNING
 )
 
 # WA164: Overlapping IP/CIDR entries within a single IP set
-WA164 = RuleMeta("WA164", "cross-rule", "Overlapping IP/CIDR entries in IP set", Severity.WARNING)
+WA164 = RuleMeta("WA164", "cross_rule", "Overlapping IP/CIDR entries in IP set", Severity.WARNING)
 
 # WA326: Cross-file ARN reference validation
 WA326 = RuleMeta(
     "WA326",
-    "cross-rule",
+    "cross_rule",
     "IPSetReferenceStatement references IP Set not in lists section",
     Severity.INFO,
 )
@@ -185,14 +190,14 @@ WA326 = RuleMeta(
 # WA327: Cross-file regex pattern set ARN reference validation
 WA327 = RuleMeta(
     "WA327",
-    "cross-rule",
+    "cross_rule",
     "RegexPatternSetReferenceStatement references Regex Pattern Set not in lists section",
     Severity.INFO,
 )
 
 # WA340: WCU capacity estimation
 WA340 = RuleMeta(
-    "WA340", "cross-rule", "Estimated total WCU exceeds Web ACL limit", Severity.WARNING
+    "WA340", "cross_rule", "Estimated total WCU exceeds Web ACL limit", Severity.WARNING
 )
 
 # WA341-WA343: Heuristic always-true/false/contradictory
@@ -237,7 +242,7 @@ WA339 = RuleMeta("WA339", "statement", "Invalid FallbackBehavior value", Severit
 # WA603: Unreachable rule after catch-all
 WA603 = RuleMeta(
     "WA603",
-    "cross-rule",
+    "cross_rule",
     "Rule likely unreachable after always-true terminating rule",
     Severity.WARNING,
 )

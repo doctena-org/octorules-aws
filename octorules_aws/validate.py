@@ -1,6 +1,7 @@
 """Offline validation for AWS WAF rules."""
 
 import re
+from contextvars import ContextVar
 
 from octorules.linter.engine import LintResult, Severity
 
@@ -2073,9 +2074,92 @@ _WCU_BASE: dict[str, int] = {
     "SqliMatchStatement": 15,
     "XssMatchStatement": 15,
     "LabelMatchStatement": 1,
-    "ManagedRuleGroupStatement": 100,  # varies, use 100 as estimate
+    # ManagedRuleGroupStatement: per-group lookup; see _MANAGED_RULE_GROUP_WCU.
+    # Marketplace vendors and unknown AWS groups fall back to this default.
+    "ManagedRuleGroupStatement": 100,
     "RuleGroupReferenceStatement": 1,
 }
+
+# AWS-published WCU costs for AWS-vendored managed rule groups, captured
+# from the AWS WAF developer guide (2026-04). Stable since 2023; bump
+# the relevant entries here when AWS revises a group's WCU cost.
+#
+# Sources:
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-baseline.html
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-use-case.html
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-bot.html
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-ip-rep.html
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-acfp.html
+#   - https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-atp.html
+#
+# Marketplace vendor groups are NOT listed here (their WCU costs are set
+# at subscription time and not publicly enumerated). Marketplace falls
+# back to the generic 100 in ``_WCU_BASE`` unless overridden via
+# :func:`set_managed_rule_group_wcu_overrides`.
+_MANAGED_RULE_GROUP_WCU: dict[str, int] = {
+    "AWSManagedRulesCommonRuleSet": 700,
+    "AWSManagedRulesKnownBadInputsRuleSet": 200,
+    "AWSManagedRulesSQLiRuleSet": 200,
+    "AWSManagedRulesLinuxRuleSet": 200,
+    "AWSManagedRulesWindowsRuleSet": 200,
+    "AWSManagedRulesAdminProtectionRuleSet": 100,
+    "AWSManagedRulesUnixRuleSet": 100,  # POSIX
+    "AWSManagedRulesPHPRuleSet": 100,
+    "AWSManagedRulesWordPressRuleSet": 100,
+    "AWSManagedRulesBotControlRuleSet": 50,
+    "AWSManagedRulesATPRuleSet": 50,
+    "AWSManagedRulesACFPRuleSet": 50,
+    "AWSManagedRulesAnonymousIpList": 50,
+    "AWSManagedRulesAmazonIpReputationList": 25,
+}
+
+# Caller-supplied WCU overrides keyed by ``"VendorName/Name"`` or just
+# ``"Name"`` (vendor-agnostic). Set via
+# :func:`set_managed_rule_group_wcu_overrides`. Falls through to the
+# vendor lookup / 100 default when an override is absent.
+_managed_wcu_overrides_var: ContextVar[dict[str, int] | None] = ContextVar(
+    "managed_wcu_overrides", default=None
+)
+
+
+def _get_managed_wcu_overrides() -> dict[str, int]:
+    """Return the current ContextVar value as a dict (never None)."""
+    val = _managed_wcu_overrides_var.get()
+    return val if val is not None else {}
+
+
+def set_managed_rule_group_wcu_overrides(overrides: dict[str, int]) -> None:
+    """Override WCU estimates for specific managed rule groups.
+
+    *overrides* maps ``"VendorName/Name"`` (preferred) or bare ``"Name"``
+    (vendor-agnostic) to a WCU integer. Wins over the AWS-vendored lookup
+    and the generic 100 fallback. Stored in a :class:`ContextVar`, so
+    overrides set in one thread do not leak to another.
+
+    Typical use case: a marketplace rule group whose WCU cost the user
+    has confirmed via the AWS console. ::
+
+        from octorules_aws.validate import set_managed_rule_group_wcu_overrides
+        set_managed_rule_group_wcu_overrides({"Cloudflare/SomeGroup": 75})
+    """
+    _managed_wcu_overrides_var.set(dict(overrides))
+
+
+def _estimate_managed_rule_group_wcu(inner: dict) -> int:
+    """Look up WCU for a ManagedRuleGroupStatement via overrides → lookup → default."""
+    if not isinstance(inner, dict):
+        return _WCU_BASE["ManagedRuleGroupStatement"]
+    name = inner.get("Name", "") if isinstance(inner.get("Name"), str) else ""
+    vendor = inner.get("VendorName", "") if isinstance(inner.get("VendorName"), str) else ""
+    overrides = _get_managed_wcu_overrides()
+    if vendor and name and f"{vendor}/{name}" in overrides:
+        return overrides[f"{vendor}/{name}"]
+    if name and name in overrides:
+        return overrides[name]
+    if vendor == "AWS" and name in _MANAGED_RULE_GROUP_WCU:
+        return _MANAGED_RULE_GROUP_WCU[name]
+    return _WCU_BASE["ManagedRuleGroupStatement"]
+
 
 # Statement types where each TextTransformation adds +1 WCU
 _WCU_TEXT_TRANSFORM_TYPES = frozenset(
@@ -2127,6 +2211,8 @@ def _estimate_wcu(statement: dict) -> int:
             return cost
 
         # Leaf statement
+        if stype == "ManagedRuleGroupStatement":
+            return _estimate_managed_rule_group_wcu(inner if isinstance(inner, dict) else {})
         base = _WCU_BASE.get(stype, 1)
         if stype in _WCU_TEXT_TRANSFORM_TYPES and isinstance(inner, dict):
             tts = inner.get("TextTransformations", [])

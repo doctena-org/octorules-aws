@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **86 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **87 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -73,6 +73,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA162](#wa162--reservedbogon-ip-in-ip-set) | Reserved/bogon IP in IP set | WARNING |
 | [WA163](#wa163--catch-all-cidr-in-ip-set) | Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set | WARNING |
 | [WA164](#wa164--overlapping-ipcidr-entries-in-ip-set) | Overlapping IP/CIDR entries in IP set | WARNING |
+| [WA165](#wa165--regex-pattern-set-exceeds-10-pattern-limit) | Regex pattern set exceeds 10-pattern limit | ERROR |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
 | [WA201](#wa201--invalid-overrideaction-type) | Invalid OverrideAction type | ERROR |
 | [WA300](#wa300--statement-must-have-exactly-one-type) | Statement must have exactly one type | ERROR |
@@ -148,7 +149,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA156-WA161, WA300-WA343 | Statement validation | 44 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA162-WA164, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 11 |
+| WA158, WA162-WA165, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 12 |
 | WA600-WA602 | Best practice | 3 |
 
 ---
@@ -1976,11 +1977,44 @@ lists:
 
 **Fix:** Remove the narrower CIDR (the broader one already matches it), or split the IPSet into multiple sets with distinct ranges if the entries came from different sources.
 
+### WA165 -- Regex pattern set exceeds 10-pattern limit
+
+**Severity:** ERROR
+
+AWS WAFv2 caps regex pattern sets at **10 patterns per set** (per-region), and the limit is **not adjustable** through Service Quotas. Sets with more than 10 patterns will fail at apply time, so this is reported as ERROR rather than WARNING.
+
+Reference: <https://docs.aws.amazon.com/waf/latest/developerguide/limits.html>
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocked_paths
+    kind: regex
+    items:
+      - "^/admin"
+      - "^/wp-admin"
+      - "^/phpmyadmin"
+      # ... 8 more entries → exceeds 10-pattern cap
+```
+
+**Fix:** Split the patterns across multiple regex pattern sets (each used by its own rule), or combine them into a single more-permissive regex (e.g. `^/(admin|wp-admin|phpmyadmin|…)`).
+
 ### WA340 -- Estimated total WCU exceeds Web ACL limit
 
 **Severity:** WARNING
 
-The estimated total Web ACL Capacity Units (WCU) across all AWS phases exceeds the default Web ACL limit of 1,500 WCU. Each statement type has a known base WCU cost, and compound statements (And, Or, Not, RateBasedStatement) add to the total recursively. Managed rule groups are estimated at 100 WCU each (actual cost varies).
+The estimated total Web ACL Capacity Units (WCU) across all AWS phases exceeds the default Web ACL limit of 1,500 WCU. Each statement type has a known base WCU cost, and compound statements (And, Or, Not, RateBasedStatement) add to the total recursively.
+
+For AWS-vendored managed rule groups, the estimator uses AWS's published per-group WCU costs (e.g. `AWSManagedRulesCommonRuleSet` = 700, `AWSManagedRulesAmazonIpReputationList` = 25). Marketplace vendor groups and unrecognized AWS group names fall back to a generic 100 WCU estimate; you can override these explicitly via `octorules_aws.validate.set_managed_rule_group_wcu_overrides()`:
+
+```python
+from octorules_aws.validate import set_managed_rule_group_wcu_overrides
+set_managed_rule_group_wcu_overrides({
+    "Cloudflare/SomeGroup": 75,        # marketplace vendor
+    "AWSManagedRulesCustomGroup": 50,  # name-only match (vendor-agnostic)
+})
+```
 
 **WCU cost table:**
 
@@ -1995,7 +2029,7 @@ The estimated total Web ACL Capacity Units (WCU) across all AWS phases exceeds t
 | SqliMatchStatement | 15 + (1 per TextTransformation) |
 | XssMatchStatement | 15 + (1 per TextTransformation) |
 | LabelMatchStatement | 1 |
-| ManagedRuleGroupStatement | ~100 (estimate) |
+| ManagedRuleGroupStatement | per-group lookup (AWS-vendored) or 100 (default) |
 | RuleGroupReferenceStatement | 1 |
 | RateBasedStatement | 2 + ScopeDownStatement cost |
 | AndStatement | 1 + sum of nested costs |

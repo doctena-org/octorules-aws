@@ -26,6 +26,7 @@ _PLUGIN_RULE_IDS: frozenset[str] = frozenset(
     {
         "WA024",
         "WA158",
+        "WA165",
         "WA162",
         "WA163",
         "WA164",
@@ -361,10 +362,20 @@ def _check_rule_count(rules_data: dict[str, Any], ctx: LintContext) -> None:
 
 
 _MAX_IPSET_ITEMS = 10_000
+# AWS WAFv2 caps regex pattern sets at 10 patterns per set (per-region, not
+# adjustable via Service Quotas).  See:
+# https://docs.aws.amazon.com/waf/latest/developerguide/limits.html
+_MAX_REGEX_PATTERNS = 10
 
 
 def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> None:
-    """WA158: Warn if any IP set in the lists section exceeds 10,000 items."""
+    """WA158 / WA165: Enforce per-list item-count caps.
+
+    - **WA158** (WARNING): IP sets (``kind: ip`` or unset) limited to 10,000
+      unique addresses.
+    - **WA165** (ERROR): Regex pattern sets (``kind: regex``) limited to 10
+      patterns per set — AWS API hard limit, not adjustable.
+    """
     lists_section = rules_data.get("lists")
     if not isinstance(lists_section, list):
         return
@@ -375,10 +386,31 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
         items = lst.get("items")
         if not isinstance(items, list):
             continue
-        # Deduplicate: AWS WAF counts unique addresses.
+        kind = lst.get("kind", "ip")
+        name = lst.get("name", "<unknown>")
+        if kind == "regex":
+            # WA165: regex pattern set count cap.
+            if len(items) > _MAX_REGEX_PATTERNS:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA165",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Regex pattern set '{name}' has {len(items)} patterns,"
+                            f" exceeding the AWS WAF hard limit of {_MAX_REGEX_PATTERNS}"
+                            " patterns per set"
+                        ),
+                        phase="",
+                        suggestion=(
+                            "Split the patterns across multiple regex pattern sets,"
+                            " or combine them into a single more-permissive regex"
+                        ),
+                    )
+                )
+            continue
+        # WA158: IP set address cap. Deduplicate — AWS counts unique addresses.
         unique_count = len(set(str(i) for i in items))
         if unique_count > _MAX_IPSET_ITEMS:
-            name = lst.get("name", "<unknown>")
             dup_note = ""
             if unique_count < len(items):
                 dup_note = f" ({len(items)} total, {len(items) - unique_count} duplicates)"

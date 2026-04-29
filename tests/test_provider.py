@@ -1790,8 +1790,12 @@ class TestPaginationEdgeCases:
         with pytest.raises(ProviderError, match="Pagination loop detected"):
             provider.list_zones()
 
-    def test_max_pages_cap(self, mock_waf_client, caplog):
-        """Pagination stops at _MAX_PAGES even with valid unique markers."""
+    def test_max_pages_cap_raises(self, mock_waf_client):
+        """Pagination raises ProviderError when _MAX_PAGES is exhausted.
+
+        Loud failure beats silent truncation: callers must never act on
+        partial data without a clear signal that data is missing.
+        """
         call_count = 0
 
         def paginated_response(**kwargs):
@@ -1805,9 +1809,8 @@ class TestPaginationEdgeCases:
         mock_waf_client.list_web_acls.side_effect = paginated_response
         provider = AwsWafProvider(client=mock_waf_client)
         provider._MAX_PAGES = 5
-        zones = provider.list_zones()
-        assert len(zones) == 5
-        assert "exceeded" in caplog.text.lower()
+        with pytest.raises(ProviderError, match="Pagination exceeded 5 pages"):
+            provider.list_zones()
 
     def test_create_ruleset_missing_id(self, mock_waf_client):
         """ProviderError when create response lacks Summary.Id."""

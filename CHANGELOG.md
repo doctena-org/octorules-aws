@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-04-29
+
+### Added
+- **WA165** (cross_rule, ERROR): regex pattern set exceeds the AWS hard
+  limit of 10 patterns per set. AWS WAFv2 caps regex pattern sets at
+  10 patterns and the limit is not adjustable via Service Quotas; sets
+  with more entries fail at apply time. Reported as ERROR with a
+  suggestion to split or merge patterns.
+- **Per-managed-rule-group WCU lookup**: WA340 now reports realistic
+  WCU usage for AWS-vendored managed rule groups using AWS's published
+  per-group costs (e.g. `AWSManagedRulesCommonRuleSet` = 700,
+  `AWSManagedRulesAmazonIpReputationList` = 25). Previously every
+  managed rule group was estimated at a flat 100 WCUs.
+- New public API
+  `octorules_aws.validate.set_managed_rule_group_wcu_overrides()` —
+  override the WCU estimate for a specific managed rule group, keyed
+  by `"VendorName/Name"` or bare `"Name"`. Useful for marketplace
+  vendor groups whose WCU cost the user has confirmed via the AWS
+  console. Stored in a `ContextVar` so overrides do not leak across
+  threads.
+
+### Changed
+- `_paginate_aws_list` (used internally by all list-* methods) now
+  raises `ProviderError` if pagination exceeds 100 pages instead of
+  warning and returning a truncated result. Silent truncation could
+  cause callers to act on incomplete data.
+- Internal rule category string normalized from `cross-rule` to
+  `cross_rule` (matches the underscore convention used by WA158,
+  WA162-WA164, WA326-WA327, WA340, WA520, WA603). Affects rule
+  metadata only; rule IDs, severities, and messages are unchanged.
+
 ## [0.7.8] - 2026-04-18
 
 ### Added

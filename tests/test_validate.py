@@ -3321,7 +3321,9 @@ class TestWcuEstimation:
         # Base 15 + 1 text transformation = 16
         assert _estimate_wcu(stmt) == 16
 
-    def test_managed_rule_group_estimate(self):
+    def test_managed_rule_group_estimate_uses_published_table(self):
+        """ManagedRuleGroupStatement uses a per-group lookup; Core Rule Set
+        is 700 per AWS docs (was a flat 100 estimate previously)."""
         from octorules_aws.validate import _estimate_wcu
 
         stmt = {
@@ -3330,7 +3332,7 @@ class TestWcuEstimation:
                 "Name": "AWSManagedRulesCommonRuleSet",
             }
         }
-        assert _estimate_wcu(stmt) == 100
+        assert _estimate_wcu(stmt) == 700
 
     def test_and_statement(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3419,6 +3421,166 @@ class TestWcuEstimation:
         from octorules_aws.validate import _estimate_wcu
 
         assert _estimate_wcu({}) == 0
+
+
+class TestManagedRuleGroupWcu:
+    """Tests for the per-group WCU lookup.
+
+    The lookup replaces a flat ``100`` heuristic with a 14-entry table of
+    AWS-published costs (range 25–700), plus a programmatic override
+    mechanism for marketplace vendors whose costs are set per-subscription.
+    """
+
+    def setup_method(self):
+        # Reset overrides at the start of each test (ContextVar leaks
+        # between tests in the same thread otherwise).
+        from octorules_aws.validate import set_managed_rule_group_wcu_overrides
+
+        set_managed_rule_group_wcu_overrides({})
+
+    def test_aws_core_rule_set_uses_published_700(self):
+        """Core Rule Set is one of the highest-cost groups (700 WCU)."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+            }
+        }
+        assert _estimate_wcu(stmt) == 700
+
+    def test_aws_ip_reputation_uses_published_25(self):
+        """Amazon IP Reputation List is the cheapest AWS group (25 WCU)."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesAmazonIpReputationList",
+            }
+        }
+        assert _estimate_wcu(stmt) == 25
+
+    def test_aws_unknown_group_falls_back_to_100(self):
+        """An AWS-vendored name we don't have in the table falls through."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesFutureGroupNotYetReleased",
+            }
+        }
+        assert _estimate_wcu(stmt) == 100
+
+    def test_marketplace_vendor_falls_back_to_100(self):
+        """Marketplace vendors aren't in the AWS table; default to 100."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "Cloudflare",
+                "Name": "CloudflareManagedRules",
+            }
+        }
+        assert _estimate_wcu(stmt) == 100
+
+    def test_missing_vendor_falls_back_to_100(self):
+        """No VendorName at all → can't be AWS-vendored → 100."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "Name": "AWSManagedRulesCommonRuleSet",
+            }
+        }
+        # Even though Name is in the table, VendorName != "AWS" so we're
+        # conservative and return the default. (Marketplace vendors sometimes
+        # ship groups with names that collide.)
+        assert _estimate_wcu(stmt) == 100
+
+    def test_override_with_vendor_slash_name_wins(self):
+        """``Vendor/Name`` override takes precedence over the AWS table."""
+        from octorules_aws.validate import (
+            _estimate_wcu,
+            set_managed_rule_group_wcu_overrides,
+        )
+
+        set_managed_rule_group_wcu_overrides({"AWS/AWSManagedRulesCommonRuleSet": 1234})
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet",
+            }
+        }
+        assert _estimate_wcu(stmt) == 1234
+
+    def test_override_with_bare_name_wins(self):
+        """Bare ``Name`` override (vendor-agnostic) also wins."""
+        from octorules_aws.validate import (
+            _estimate_wcu,
+            set_managed_rule_group_wcu_overrides,
+        )
+
+        set_managed_rule_group_wcu_overrides({"CloudflareManagedRules": 75})
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "Cloudflare",
+                "Name": "CloudflareManagedRules",
+            }
+        }
+        assert _estimate_wcu(stmt) == 75
+
+    def test_vendor_slash_name_override_beats_bare_name(self):
+        """Specific ``Vendor/Name`` wins over bare ``Name`` when both set."""
+        from octorules_aws.validate import (
+            _estimate_wcu,
+            set_managed_rule_group_wcu_overrides,
+        )
+
+        set_managed_rule_group_wcu_overrides(
+            {
+                "GenericGroup": 50,
+                "Cloudflare/GenericGroup": 100,
+            }
+        )
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "Cloudflare",
+                "Name": "GenericGroup",
+            }
+        }
+        assert _estimate_wcu(stmt) == 100
+
+    def test_overrides_isolated_between_set_calls(self):
+        """``set_managed_rule_group_wcu_overrides`` replaces, not merges."""
+        from octorules_aws.validate import (
+            _estimate_wcu,
+            set_managed_rule_group_wcu_overrides,
+        )
+
+        set_managed_rule_group_wcu_overrides({"OldGroup": 999})
+        set_managed_rule_group_wcu_overrides({"NewGroup": 42})
+        stmt = {"ManagedRuleGroupStatement": {"VendorName": "Vendor", "Name": "OldGroup"}}
+        # OldGroup override was replaced; falls back to marketplace default.
+        assert _estimate_wcu(stmt) == 100
+
+    def test_managed_rule_group_with_text_transformations_ignored(self):
+        """ManagedRuleGroupStatement isn't a TextTransform-bearing type;
+        any TT field on the inner dict shouldn't inflate the WCU."""
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesAmazonIpReputationList",
+                # Intentionally bogus — ManagedRuleGroupStatement doesn't
+                # carry TextTransformations, but make sure we don't read them.
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+            }
+        }
+        assert _estimate_wcu(stmt) == 25
 
     def test_unknown_statement_type_defaults_to_1(self):
         from octorules_aws.validate import _estimate_wcu

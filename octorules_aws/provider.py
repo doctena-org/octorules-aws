@@ -247,16 +247,19 @@ class AwsWafProvider:
             results.extend(response.get(response_key) or [])
             marker = response.get("NextMarker")
             if not marker:
-                break
+                return results
             if marker in seen_markers:
                 raise ProviderError(
                     f"Pagination loop detected for {response_key}: marker {marker!r} repeated"
                 )
             seen_markers.add(marker)
             kwargs["NextMarker"] = marker
-        else:
-            log.warning("Pagination exceeded %d pages for %s", self._MAX_PAGES, response_key)
-        return results
+        # _MAX_PAGES exhausted with NextMarker still set: bail loudly so callers
+        # don't silently act on truncated data.
+        raise ProviderError(
+            f"Pagination exceeded {self._MAX_PAGES} pages for {response_key}; "
+            "likely a malformed marker chain"
+        )
 
     # -- Web ACL helpers --
 
