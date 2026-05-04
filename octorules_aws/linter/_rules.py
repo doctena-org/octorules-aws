@@ -247,4 +247,48 @@ WA603 = RuleMeta(
     Severity.WARNING,
 )
 
+# WA025: Header name should be lowercase
+WA025 = RuleMeta("WA025", "style", "Header name should be lowercase", Severity.INFO)
+
+# WA166: CIDR has host bits set
+WA166 = RuleMeta("WA166", "cross_rule", "CIDR has host bits set", Severity.WARNING)
+
+# WA167: Overlapping CIDR across rules
+WA167 = RuleMeta(
+    "WA167",
+    "cross_rule",
+    "Overlapping or duplicate CIDR across rules in phase",
+    Severity.WARNING,
+)
+
+# WA344: Overly-permissive regex pattern
+WA344 = RuleMeta(
+    "WA344",
+    "statement",
+    "Regex pattern matches every value (overly-permissive)",
+    Severity.WARNING,
+)
+
+# WA345: Fully-anchored literal regex
+WA345 = RuleMeta(
+    "WA345",
+    "statement",
+    "Fully-anchored literal regex can be simplified to ByteMatchStatement",
+    Severity.INFO,
+)
+
+# WA346: HTTP method should be uppercase
+WA346 = RuleMeta("WA346", "statement", "HTTP method should be uppercase", Severity.WARNING)
+
+# WA347: URI path should start with /
+WA347 = RuleMeta("WA347", "statement", "URI path should start with /", Severity.WARNING)
+
+# WA348: AndStatement with contradictory ByteMatch field values
+WA348 = RuleMeta(
+    "WA348",
+    "statement",
+    "AndStatement with contradictory ByteMatch field values",
+    Severity.WARNING,
+)
+
 AWS_RULE_METAS: list[RuleMeta] = [obj for obj in globals().values() if isinstance(obj, RuleMeta)]

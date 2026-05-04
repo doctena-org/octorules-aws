@@ -1,5 +1,6 @@
 """Offline validation for AWS WAF rules."""
 
+import base64
 import re
 from contextvars import ContextVar
 
@@ -19,6 +20,7 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA021",
         "WA022",
         "WA023",
+        "WA025",
         "WA100",
         "WA101",
         "WA102",
@@ -28,6 +30,8 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA159",
         "WA160",
         "WA161",
+        "WA166",
+        "WA167",
         "WA200",
         "WA201",
         "WA300",
@@ -69,6 +73,11 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA341",
         "WA342",
         "WA343",
+        "WA344",
+        "WA345",
+        "WA346",
+        "WA347",
+        "WA348",
         "WA350",
         "WA351",
         "WA352",
@@ -356,6 +365,10 @@ def validate_rules(rules: list[dict], *, phase: str = "") -> list[LintResult]:
         _check_rule_labels(rule, results, phase, ref_str)
         _check_statement(rule, results, phase, ref_str)
         _check_count_managed_group(rule, results, phase, ref_str)
+        # New checks for styles and specific patterns
+        _check_header_case(rule, results, phase, ref_str)
+        _check_regex_patterns(rule, results, phase, ref_str)
+        _check_byte_match_specifics(rule, results, phase, ref_str)
 
     _check_duplicate_priorities(seen_priorities, results, phase)
     _check_priority_gaps(seen_priorities, results, phase)
@@ -2297,6 +2310,8 @@ def _check_heuristic_patterns(
             stmts = inner.get("Statements", [])
             if isinstance(stmts, list):
                 _check_contradictory_geo(stmts, results, phase, ref)
+                # WA348: AndStatement with contradictory ByteMatch field values
+                _check_contradictory_byte_match(stmts, results, phase, ref)
 
     # No explicit recursion here -- _validate_statement already recurses into
     # compound children via _check_compound/_check_not, which call
@@ -2338,6 +2353,135 @@ def _check_contradictory_geo(
                         ref=ref,
                         field="Statement.AndStatement",
                         suggestion="Use OrStatement to match traffic from either set",
+                    )
+                )
+                return  # One warning per AndStatement is enough
+
+
+def _field_to_match_key(ftm: dict) -> str | None:
+    """
+    Compute a canonical key for a FieldToMatch dict.
+    Returns a string that is the same for identical field targets, or None if invalid.
+
+    Examples:
+    - {"Method": {}} -> "Method"
+    - {"UriPath": {}} -> "UriPath"
+    - {"SingleHeader": {"Name": "User-Agent"}} -> "SingleHeader:User-Agent"
+    - {"SingleQueryArgument": {"Name": "id"}} -> "SingleQueryArgument:id"
+    """
+    if not isinstance(ftm, dict):
+        return None
+
+    # Handle fields with no parameterization
+    for field_name in (
+        "Method",
+        "UriPath",
+        "QueryString",
+        "Body",
+        "JsonBody",
+        "UriFragment",
+        "AllQueryArguments",
+        "Headers",
+        "Cookies",
+        "JA3Fingerprint",
+        "JA4Fingerprint",
+        "HeaderOrder",
+    ):
+        if field_name in ftm:
+            return field_name
+
+    # Handle fields that take a Name parameter
+    for field_name in ("SingleHeader", "SingleQueryArgument", "SingleCookie"):
+        if field_name in ftm:
+            param_dict = ftm[field_name]
+            if isinstance(param_dict, dict) and "Name" in param_dict:
+                name = param_dict["Name"]
+                if isinstance(name, str):
+                    return f"{field_name}:{name}"
+            return None
+
+    return None
+
+
+def _check_contradictory_byte_match(
+    stmts: list[dict],
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA348: Detect AndStatement with contradictory ByteMatchStatement field values.
+
+    Fires when two or more direct child ByteMatchStatements target the same field
+    with mutually exclusive exact-match constraints (different SearchString values,
+    both EXACTLY constraint, matching TextTransformations).
+    """
+    # Collect direct ByteMatchStatement children with their field keys and search strings.
+    byte_matches: list[
+        tuple[str, str, list[dict]]
+    ] = []  # (field_key, search_string, text_transforms)
+
+    for s in stmts:
+        if not isinstance(s, dict):
+            continue
+        bms = s.get("ByteMatchStatement")
+        if not isinstance(bms, dict):
+            continue
+
+        # Extract FieldToMatch, PositionalConstraint, SearchString, TextTransformations
+        ftm = bms.get("FieldToMatch")
+        pos_constraint = bms.get("PositionalConstraint")
+        search_string = bms.get("SearchString")
+        text_transforms = bms.get("TextTransformations", [])
+
+        # Only consider EXACTLY constraints
+        if pos_constraint != "EXACTLY":
+            continue
+
+        # Must have FieldToMatch and SearchString
+        if not ftm or search_string is None:
+            continue
+
+        ftm_key = _field_to_match_key(ftm)
+        if ftm_key is None:
+            continue
+
+        # Normalize TextTransformations for comparison
+        if not isinstance(text_transforms, list):
+            text_transforms = []
+        tt_tuple = tuple(
+            sorted(
+                (t.get("Type", ""), t.get("Priority", 0))
+                for t in text_transforms
+                if isinstance(t, dict)
+            )
+        )
+
+        byte_matches.append((ftm_key, search_string, tt_tuple))
+
+    # Check all pairs for same field, different SearchString, matching TextTransformations
+    for i in range(len(byte_matches)):
+        for j in range(i + 1, len(byte_matches)):
+            ftm_key_i, search_i, tt_i = byte_matches[i]
+            ftm_key_j, search_j, tt_j = byte_matches[j]
+
+            # Same field, different SearchString, matching transforms -> contradiction
+            if ftm_key_i == ftm_key_j and search_i != search_j and tt_i == tt_j:
+                results.append(
+                    _result(
+                        rule_id="WA348",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"AndStatement contains two ByteMatchStatements requiring "
+                            f"the same field ({ftm_key_i}) to equal both {search_i!r} "
+                            f"and {search_j!r} simultaneously, which is impossible"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field="Statement.AndStatement",
+                        suggestion=(
+                            f"Combine {search_i!r} and {search_j!r} using regex or "
+                            f"multiple rules; or use OrStatement if either value is acceptable"
+                        ),
                     )
                 )
                 return  # One warning per AndStatement is enough
@@ -2398,3 +2542,275 @@ def _check_duplicate_metrics(
                     phase=phase,
                 )
             )
+
+
+# --- New statement checks: regex patterns, headers, HTTP methods, paths -------
+
+
+def _check_header_case(
+    rule: dict,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA025: Header names should be lowercase (style check)."""
+    stmt = rule.get("Statement")
+    if not isinstance(stmt, dict):
+        return
+
+    def check_header_name(name: str, field_path: str) -> None:
+        if name and name != name.lower():
+            results.append(
+                _result(
+                    rule_id="WA025",
+                    severity=Severity.INFO,
+                    message=f"Header name {name!r} should be lowercase ({name.lower()!r})",
+                    phase=phase,
+                    ref=ref,
+                    field=field_path,
+                    suggestion=f"Use {name.lower()!r}",
+                )
+            )
+
+    def walk_statement(s: dict, path: str = "Statement") -> None:
+        """Recursively check all FieldToMatch.SingleHeader.Name fields."""
+        if not isinstance(s, dict):
+            return
+        # Check direct ByteMatchStatement or RegexMatchStatement
+        for stmt_type in ("ByteMatchStatement", "RegexMatchStatement"):
+            stmt_inner = s.get(stmt_type)
+            if isinstance(stmt_inner, dict):
+                ftm = stmt_inner.get("FieldToMatch")
+                if isinstance(ftm, dict):
+                    sh = ftm.get("SingleHeader")
+                    if isinstance(sh, dict):
+                        name = sh.get("Name")
+                        if isinstance(name, str):
+                            check_header_name(
+                                name, f"{path}.{stmt_type}.FieldToMatch.SingleHeader.Name"
+                            )
+                    # Also check Headers.MatchPattern
+                    headers = ftm.get("Headers")
+                    if isinstance(headers, dict):
+                        mp = headers.get("MatchPattern")
+                        if isinstance(mp, dict):
+                            for inc in mp.get("IncludedHeaders") or []:
+                                if isinstance(inc, str):
+                                    check_header_name(
+                                        inc,
+                                        f"{path}.{stmt_type}.FieldToMatch.Headers.MatchPattern.IncludedHeaders[]",
+                                    )
+                            for exc in mp.get("ExcludedHeaders") or []:
+                                if isinstance(exc, str):
+                                    check_header_name(
+                                        exc,
+                                        f"{path}.{stmt_type}.FieldToMatch.Headers.MatchPattern.ExcludedHeaders[]",
+                                    )
+        # Recurse into compound statements
+        for and_or_stmt in ("AndStatement", "OrStatement"):
+            compound = s.get(and_or_stmt)
+            if isinstance(compound, dict):
+                for nested in compound.get("Statements") or []:
+                    if isinstance(nested, dict):
+                        walk_statement(nested, f"{path}.{and_or_stmt}.Statements[]")
+        # Recurse into NotStatement
+        not_stmt = s.get("NotStatement")
+        if isinstance(not_stmt, dict):
+            nested = not_stmt.get("Statement")
+            if isinstance(nested, dict):
+                walk_statement(nested, f"{path}.NotStatement.Statement")
+
+    walk_statement(stmt)
+
+
+def _check_regex_patterns(
+    rule: dict,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA344/WA345: Check regex patterns for permissiveness and unnecessary anchoring."""
+    # Permissive patterns that match everything
+    _PERMISSIVE_PATTERNS = frozenset(
+        {"", ".", ".*", "^.*", ".*$", "^.*$", ".+", "^.+", ".+$", "^.+$", "^", "$", "|"}
+    )
+    _PERMISSIVE_PATH_PATTERNS = frozenset({"/", "^/", "/.*", "^/.*", "/.*$", "^/.*$"})
+    _FULLY_ANCHORED_LITERAL = re.compile(r"^\^([a-zA-Z0-9_/-]|\\.|\\/)+\$$")
+
+    stmt = rule.get("Statement")
+    if not isinstance(stmt, dict):
+        return
+
+    def walk_statement(s: dict, path: str = "Statement") -> None:
+        """Recursively check all regex patterns."""
+        if not isinstance(s, dict):
+            return
+
+        # Check ByteMatchStatement and RegexMatchStatement
+        for stmt_type in ("ByteMatchStatement", "RegexMatchStatement"):
+            if stmt_type == "ByteMatchStatement":
+                # Check SearchString for numeric/binary methods (not regex-based)
+                continue
+            stmt_inner = s.get(stmt_type)
+            if isinstance(stmt_inner, dict):
+                regex = stmt_inner.get("RegexString")
+                if not isinstance(regex, str):
+                    continue
+                ftm = stmt_inner.get("FieldToMatch")
+                if not isinstance(ftm, dict):
+                    continue
+
+                # Determine if this is a path-context field
+                is_path_field = "UriPath" in ftm
+                permissive_set = _PERMISSIVE_PATTERNS | (
+                    _PERMISSIVE_PATH_PATTERNS if is_path_field else frozenset()
+                )
+
+                # WA344: Check for overly-permissive patterns
+                if regex in permissive_set:
+                    results.append(
+                        _result(
+                            rule_id="WA344",
+                            severity=Severity.WARNING,
+                            message=(
+                                f"Regex {regex!r} matches every value; "
+                                "rule has effectively no condition"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{path}.{stmt_type}.RegexString",
+                            suggestion=(
+                                "Use a more specific pattern or remove the rule "
+                                "if match-all is intentional"
+                            ),
+                        )
+                    )
+
+                # WA345: Check for fully-anchored literals
+                # (can simplify to ByteMatchStatement with EXACTLY)
+                m = _FULLY_ANCHORED_LITERAL.match(regex)
+                if m:
+                    literal = m.group(1).replace(r"\.", ".").replace(r"\/", "/")
+                    results.append(
+                        _result(
+                            rule_id="WA345",
+                            severity=Severity.INFO,
+                            message=(
+                                f"Regex {regex!r} is a fully-anchored literal "
+                                "that can be replaced with ByteMatchStatement"
+                            ),
+                            phase=phase,
+                            ref=ref,
+                            field=f"{path}.{stmt_type}.RegexString",
+                            suggestion=(
+                                f"Replace with ByteMatchStatement using "
+                                f"PositionalConstraint: EXACTLY and "
+                                f'SearchString: "{literal}"'
+                            ),
+                        )
+                    )
+
+        # Check RegexPatternSetReferenceStatement
+        rps = s.get("RegexPatternSetReferenceStatement")
+        if isinstance(rps, dict):
+            # We can't validate the patterns without access to the pattern set definition
+            # This would require cross-rule context. Skip for now.
+            pass
+
+        # Recurse into compound statements
+        for and_or_stmt in ("AndStatement", "OrStatement"):
+            compound = s.get(and_or_stmt)
+            if isinstance(compound, dict):
+                for nested in compound.get("Statements") or []:
+                    if isinstance(nested, dict):
+                        walk_statement(nested, f"{path}.{and_or_stmt}.Statements[]")
+        # Recurse into NotStatement
+        not_stmt = s.get("NotStatement")
+        if isinstance(not_stmt, dict):
+            nested = not_stmt.get("Statement")
+            if isinstance(nested, dict):
+                walk_statement(nested, f"{path}.NotStatement.Statement")
+
+    walk_statement(stmt)
+
+
+def _check_byte_match_specifics(
+    rule: dict,
+    results: list[LintResult],
+    phase: str,
+    ref: str,
+) -> None:
+    """WA346/WA347: Check ByteMatchStatement SearchString constraints."""
+    stmt = rule.get("Statement")
+    if not isinstance(stmt, dict):
+        return
+
+    def walk_statement(s: dict, path: str = "Statement") -> None:
+        """Recursively check all ByteMatchStatement fields."""
+        if not isinstance(s, dict):
+            return
+
+        bms = s.get("ByteMatchStatement")
+        if isinstance(bms, dict):
+            ftm = bms.get("FieldToMatch")
+            search_str = bms.get("SearchString")
+            if not isinstance(ftm, dict) or not isinstance(search_str, str):
+                pass  # Skip if malformed; WA312 will catch it
+            else:
+                # WA346: Method field should have uppercase SearchString
+                if "Method" in ftm:
+                    # Decode if it looks like base64
+                    try:
+                        decoded = base64.b64decode(search_str).decode("utf-8", errors="ignore")
+                    except Exception:
+                        decoded = search_str
+                    if decoded and any(c.islower() for c in decoded if c.isalpha()):
+                        results.append(
+                            _result(
+                                rule_id="WA346",
+                                severity=Severity.WARNING,
+                                message=(
+                                    f"HTTP method {decoded!r} should be uppercase "
+                                    f"({decoded.upper()!r})"
+                                ),
+                                phase=phase,
+                                ref=ref,
+                                field=f"{path}.ByteMatchStatement.SearchString",
+                                suggestion=f"Use {decoded.upper()!r}",
+                            )
+                        )
+
+                # WA347: UriPath field should start with /
+                if "UriPath" in ftm:
+                    try:
+                        decoded = base64.b64decode(search_str).decode("utf-8", errors="ignore")
+                    except Exception:
+                        decoded = search_str
+                    if decoded and not decoded.startswith("/"):
+                        results.append(
+                            _result(
+                                rule_id="WA347",
+                                severity=Severity.WARNING,
+                                message=(f"URI path value {decoded!r} should start with '/'"),
+                                phase=phase,
+                                ref=ref,
+                                field=f"{path}.ByteMatchStatement.SearchString",
+                                suggestion=f"Use '/{decoded}'",
+                            )
+                        )
+
+        # Recurse into compound statements
+        for and_or_stmt in ("AndStatement", "OrStatement"):
+            compound = s.get(and_or_stmt)
+            if isinstance(compound, dict):
+                for nested in compound.get("Statements") or []:
+                    if isinstance(nested, dict):
+                        walk_statement(nested, f"{path}.{and_or_stmt}.Statements[]")
+        # Recurse into NotStatement
+        not_stmt = s.get("NotStatement")
+        if isinstance(not_stmt, dict):
+            nested = not_stmt.get("Statement")
+            if isinstance(nested, dict):
+                walk_statement(nested, f"{path}.NotStatement.Statement")
+
+    walk_statement(stmt)

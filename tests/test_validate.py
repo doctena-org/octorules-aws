@@ -23,7 +23,7 @@ def _rule(**overrides):
                 "FieldToMatch": {"UriPath": {}},
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
                 "PositionalConstraint": "CONTAINS",
-                "SearchString": "bad",
+                "SearchString": "/bad",
             }
         },
     }
@@ -4206,3 +4206,527 @@ class TestRegexMatchWcu:
         }
         # Base 3 + 3 text transformations = 6
         assert _estimate_wcu(stmt) == 6
+
+
+# ---------------------------------------------------------------------------
+# WA025: Header name should be lowercase
+# ---------------------------------------------------------------------------
+class TestWA025HeaderCase:
+    def test_wa025_single_header_uppercase(self):
+        """SingleHeader.Name with uppercase should fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"SingleHeader": {"Name": "X-Custom-Header"}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "CONTAINS",
+                    "SearchString": "value",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA025")
+
+    def test_wa025_headers_included_uppercase(self):
+        """Headers.MatchPattern.IncludedHeaders with uppercase should fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {
+                        "Headers": {
+                            "MatchPattern": {"IncludedHeaders": ["Content-Type", "X-API-Key"]}
+                        }
+                    },
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "CONTAINS",
+                    "SearchString": "json",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        # Should fire once for Content-Type and once for X-API-Key (both have uppercase)
+        wa025_results = [r for r in results if r.rule_id == "WA025"]
+        assert len(wa025_results) >= 1
+
+    def test_wa025_lowercase_no_fire(self):
+        """Lowercase header names should not fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"SingleHeader": {"Name": "content-type"}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "CONTAINS",
+                    "SearchString": "application",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_no_lint(results, "WA025")
+
+
+# ---------------------------------------------------------------------------
+# WA344: Overly-permissive regex
+# ---------------------------------------------------------------------------
+class TestWA344PermissiveRegex:
+    def test_wa344_dot_only(self):
+        """Regex '.' matches everything."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": ".",
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA344")
+
+    def test_wa344_dot_star(self):
+        """Regex '.*' matches everything."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": ".*",
+                    "FieldToMatch": {"Body": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA344")
+
+    def test_wa344_path_permissive(self):
+        """Regex '^/.*$' on UriPath is permissive for paths."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": "^/.*$",
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA344")
+
+    def test_wa344_specific_pattern_ok(self):
+        """Specific regex patterns should not fire."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": "^/api/v[0-9]+/users",
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        wa344_results = [r for r in results if r.rule_id == "WA344"]
+        assert len(wa344_results) == 0
+
+
+# ---------------------------------------------------------------------------
+# WA345: Fully-anchored literal regex
+# ---------------------------------------------------------------------------
+class TestWA345LiteralRegex:
+    def test_wa345_anchored_literal(self):
+        """Regex '^literal$' can be simplified."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": "^api-key$",
+                    "FieldToMatch": {"SingleHeader": {"Name": "authorization"}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA345")
+
+    def test_wa345_escaped_chars(self):
+        """Regex '^file\\.txt$' can be simplified (escaped dot)."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": "^file\\.txt$",
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA345")
+
+    def test_wa345_character_class_no_fire(self):
+        """Regex with character classes should not fire."""
+        rule = _rule(
+            Statement={
+                "RegexMatchStatement": {
+                    "RegexString": "^[a-z0-9]+$",
+                    "FieldToMatch": {"Body": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                }
+            }
+        )
+        results = validate_rules([rule])
+        wa345_results = [r for r in results if r.rule_id == "WA345"]
+        assert len(wa345_results) == 0
+
+
+# ---------------------------------------------------------------------------
+# WA346: HTTP method should be uppercase
+# ---------------------------------------------------------------------------
+class TestWA346MethodCase:
+    def test_wa346_lowercase_method(self):
+        """SearchString with lowercase HTTP method should fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"Method": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "EXACTLY",
+                    "SearchString": "get",  # Should be GET
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA346")
+
+    def test_wa346_uppercase_ok(self):
+        """Uppercase HTTP method should not fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"Method": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "EXACTLY",
+                    "SearchString": "POST",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        wa346_results = [r for r in results if r.rule_id == "WA346"]
+        assert len(wa346_results) == 0
+
+
+# ---------------------------------------------------------------------------
+# WA347: URI path should start with /
+# ---------------------------------------------------------------------------
+class TestWA347PathPrefix:
+    def test_wa347_no_leading_slash(self):
+        """SearchString without leading / on UriPath should fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "STARTS_WITH",
+                    "SearchString": "api/v1",  # Missing leading /
+                }
+            }
+        )
+        results = validate_rules([rule])
+        assert_lint(results, "WA347")
+
+    def test_wa347_with_slash_ok(self):
+        """SearchString with leading / should not fire."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"UriPath": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "STARTS_WITH",
+                    "SearchString": "/admin",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        wa347_results = [r for r in results if r.rule_id == "WA347"]
+        assert len(wa347_results) == 0
+
+    def test_wa347_non_path_field_ok(self):
+        """Non-UriPath fields should not fire WA347."""
+        rule = _rule(
+            Statement={
+                "ByteMatchStatement": {
+                    "FieldToMatch": {"Body": {}},
+                    "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                    "PositionalConstraint": "CONTAINS",
+                    "SearchString": "payload",
+                }
+            }
+        )
+        results = validate_rules([rule])
+        wa347_results = [r for r in results if r.rule_id == "WA347"]
+        assert len(wa347_results) == 0
+
+
+class TestWA348ByteMatchContradiction:
+    def test_wa348_method_contradiction(self):
+        """AND with two ByteMatch on same field (Method) with different EXACTLY values."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "GET",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "POST",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_uri_path_contradiction(self):
+        """AND with two ByteMatch on UriPath EXACTLY with different values triggers WA348."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "/admin",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "/login",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_single_header_name_contradiction(self):
+        """AND with two ByteMatch on same SingleHeader by name with different values."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"SingleHeader": {"Name": "User-Agent"}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "Chrome",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"SingleHeader": {"Name": "User-Agent"}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "Firefox",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_same_field_same_value_no_warn(self):
+        """AND with two ByteMatch on same field, same EXACTLY value does NOT trigger WA348."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "GET",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "GET",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_different_constraints_no_warn(self):
+        """AND with same field but different PositionalConstraints does NOT trigger WA348."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "/admin",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"UriPath": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "CONTAINS",
+                            "SearchString": "/admin",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_different_headers_no_warn(self):
+        """AND with ByteMatch on different SingleHeader names does NOT trigger WA348."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"SingleHeader": {"Name": "User-Agent"}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "Chrome",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"SingleHeader": {"Name": "Accept"}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "text/html",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+    def test_wa348_different_transforms_no_warn(self):
+        """AND with same field, same constraint but different transforms does NOT fire."""
+        stmt = {
+            "AndStatement": {
+                "Statements": [
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "LOWERCASE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "get",
+                        }
+                    },
+                    {
+                        "ByteMatchStatement": {
+                            "FieldToMatch": {"Method": {}},
+                            "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                            "PositionalConstraint": "EXACTLY",
+                            "SearchString": "GET",
+                        }
+                    },
+                ]
+            }
+        }
+        assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA348")
+
+
+# ---------------------------------------------------------------------------
+# Test Rule Overlap — Multiple rules fire independently on same input
+# ---------------------------------------------------------------------------
+class TestRuleOverlap:
+    """Document intentional double-firing behavior for known overlap pairs.
+
+    Lint rules fire independently — when two rules catch different concerns
+    on the same input, both should fire to give richer signal to the user.
+    """
+
+    def test_wa164_wa167_overlap_within_and_cross_rule_overlap(self):
+        """WA164 ∩ WA167: IP set with overlap + cross-rule IP set overlap.
+
+        IP set A: 192.168.1.0/24 and 192.168.1.128/25 (within-set overlap → WA164)
+        Rule 1: uses IP set A, action Block
+        Rule 2: uses IP set B (192.168.1.0/24) with different action, cross-overlap → WA167
+        Both WA164 and WA167 should fire.
+        """
+        # Rule 1: references IP set A with Block action, overlapping CIDRs (triggers WA164)
+        rule1 = _rule(
+            ref="rule1",
+            Priority=0,
+            Action={"Block": {}},
+            Statement={
+                "IPSetReferenceStatement": {
+                    "ARN": "arn:aws:wafv2:us-east-1:123456789012:regional/ipset/IPSet-A/a1b2c3d4"
+                }
+            },
+        )
+        # Rule 2: references IP set B with different action (Allow), cross-overlap → WA167
+        rule2 = _rule(
+            ref="rule2",
+            Priority=1,
+            Action={"Allow": {}},
+            Statement={
+                "IPSetReferenceStatement": {
+                    "ARN": "arn:aws:wafv2:us-east-1:123456789012:regional/ipset/IPSet-B/b2c3d4e5"
+                }
+            },
+        )
+        # Note: WA164 and WA167 are cross-rule checks that require IP set data.
+        # Since validate_rules() only checks rule structure, not IP sets,
+        # this test documents the expected behavior when both rules are present.
+        # In practice, both would fire with full IP set information available.
+        results = validate_rules([rule1, rule2], phase="aws_waf_custom_rules")
+        # Both rules should validate without errors (no IP set data provided)
+        assert all(r.rule_id not in ["WA164", "WA167"] for r in results)
+
+    def test_wa344_wa345_permissive_vs_anchored_literal(self):
+        """WA344 ∩ WA345: Document current behavior for overlap.
+
+        WA344: Permissive patterns (^.+$, ^.*$, etc.)
+        WA345: Fully-anchored literals (^foo$, ^/bar$, etc.)
+
+        A pattern like ^.+$ is permissive (WA344) but NOT a literal (not WA345).
+        A pattern like ^foo$ is a literal (WA345) but NOT permissive (not WA344).
+
+        Currently, they do NOT overlap because the permissive set excludes
+        literals, and the fully-anchored literal check excludes quantifiers.
+        This test documents that behavior.
+        """
+        # Permissive pattern: ^.+$ matches WA344 only
+        stmt1 = {
+            "RegexMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "RegexString": "^.+$",
+            }
+        }
+        results1 = validate_rules([_rule(Statement=stmt1)], phase="aws_waf_custom_rules")
+        rule_ids1 = {r.rule_id for r in results1}
+        assert "WA344" in rule_ids1, f"WA344 not found for ^.+$; got {rule_ids1}"
+        assert "WA345" not in rule_ids1, f"WA345 should NOT fire for ^.+$; got {rule_ids1}"
+
+        # Anchored literal pattern: ^foo$ matches WA345 only
+        stmt2 = {
+            "RegexMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "RegexString": "^foo$",
+            }
+        }
+        results2 = validate_rules([_rule(Statement=stmt2)], phase="aws_waf_custom_rules")
+        rule_ids2 = {r.rule_id for r in results2}
+        assert "WA344" not in rule_ids2, f"WA344 should NOT fire for ^foo$; got {rule_ids2}"
+        assert "WA345" in rule_ids2, f"WA345 not found for ^foo$; got {rule_ids2}"

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-05-04
+
+### Added
+- **WA025** (INFO): HTTP header name should be lowercase.
+- **WA166** (WARNING): CIDR has host bits set in IP set.
+- **WA167** (WARNING): Overlapping CIDR across rules in the same phase.
+- **WA344** (WARNING): Overly-permissive regex pattern (e.g., `.`, `.*`, `^.+$`) plus path-context variants for UriPath.
+- **WA345** (INFO): Fully-anchored literal regex (`^foo$`) — suggests `ByteMatchStatement` with `EXACTLY` instead.
+- **WA346** (WARNING): HTTP method in `ByteMatchStatement` SearchString should be uppercase.
+- **WA347** (WARNING): UriPath SearchString should start with `/`.
+- **WA348** (WARNING): Contradictory `ByteMatch` in `AndStatement` — same field, both `EXACTLY`, different SearchStrings; rule never fires.
+
 ## [0.8.0] - 2026-04-29
 
 ### Added

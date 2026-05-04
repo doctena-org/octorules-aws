@@ -1,8 +1,10 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **87 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **95 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
+
+**Note:** Lint rules fire independently — multiple rules may report on the same input when they catch different concerns, providing richer signal for policy optimization.
 
 ### Suppressing rules
 
@@ -60,6 +62,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA022](#wa022--duplicate-ref-within-phase) | Duplicate ref within phase | ERROR |
 | [WA023](#wa023--rule-entry-is-not-a-dict) | Rule entry is not a dict | ERROR |
 | [WA024](#wa024--phase-value-is-not-a-list) | Phase value is not a list | ERROR |
+| [WA025](#wa025--http-header-name-should-be-lowercase) | HTTP header name should be lowercase | INFO |
 | [WA100](#wa100--priority-must-be-a-non-negative-integer) | Priority must be a non-negative integer | ERROR |
 | [WA101](#wa101--duplicate-priority-across-rules) | Duplicate Priority across rules | ERROR |
 | [WA102](#wa102--non-contiguous-rule-priorities) | Non-contiguous rule priorities | INFO |
@@ -74,6 +77,8 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA163](#wa163--catch-all-cidr-in-ip-set) | Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set | WARNING |
 | [WA164](#wa164--overlapping-ipcidr-entries-in-ip-set) | Overlapping IP/CIDR entries in IP set | WARNING |
 | [WA165](#wa165--regex-pattern-set-exceeds-10-pattern-limit) | Regex pattern set exceeds 10-pattern limit | ERROR |
+| [WA166](#wa166--cidr-has-host-bits-set-in-ip-set) | CIDR has host bits set in IP set | WARNING |
+| [WA167](#wa167--overlappingduplicate-cidr-across-rules-in-same-phase) | Overlapping/duplicate CIDR across rules in same phase | WARNING |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
 | [WA201](#wa201--invalid-overrideaction-type) | Invalid OverrideAction type | ERROR |
 | [WA300](#wa300--statement-must-have-exactly-one-type) | Statement must have exactly one type | ERROR |
@@ -132,6 +137,11 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA341](#wa341--geomatchstatement-likely-always-true) | GeoMatchStatement likely always true | WARNING |
 | [WA342](#wa342--contradictory-and-conditions-non-overlapping-geomatch-sets) | Contradictory AND conditions (non-overlapping GeoMatch sets) | WARNING |
 | [WA343](#wa343--always-false-pattern-sizeconstraint-size--0-is-impossible) | Always-false pattern (SizeConstraint size < 0 is impossible) | WARNING |
+| [WA344](#wa344--overly-permissive-regex-pattern) | Overly-permissive regex pattern | WARNING |
+| [WA345](#wa345--fully-anchored-literal-regex) | Fully-anchored literal regex | INFO |
+| [WA346](#wa346--http-method-in-bytematchstatement-searchstring-should-be-uppercase) | HTTP method in ByteMatchStatement SearchString should be uppercase | WARNING |
+| [WA347](#wa347--uripath-searchstring-should-start-with) | UriPath SearchString should start with / | WARNING |
+| [WA348](#wa348--contradictory-bytematch-in-andstatement) | Contradictory ByteMatch in AndStatement | WARNING |
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
 | [WA601](#wa601--total-rule-count-may-exceed-default-web-acl-limit-of-100) | Total rule count may exceed default Web ACL limit of 100 | WARNING |
 | [WA602](#wa602--count-action-on-managedrulegroup-logs-all-traffic) | Count action on ManagedRuleGroup logs all traffic | INFO |
@@ -143,13 +153,13 @@ Suppressed findings are excluded from the report but counted in the summary line
 
 | WA Range | Category | Rules |
 |----------|----------|-------|
-| WA001-WA005, WA010, WA020-WA024, WA154 | Structure & YAML | 12 |
+| WA001-WA005, WA010, WA020-WA025, WA154 | Structure & YAML | 13 |
 | WA100-WA102 | Priority | 3 |
 | WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA343 | Statement validation | 44 |
+| WA156-WA161, WA300-WA348 | Statement validation | 52 |
 | WA350-WA357 | Action parameters | 8 |
 | WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA162-WA165, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 12 |
+| WA158, WA162-WA167, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 14 |
 | WA600-WA602 | Best practice | 3 |
 
 ---
@@ -429,6 +439,39 @@ aws_waf_custom_rules: "not a list"
 ```
 
 **Fix:** Replace the value with a YAML list of rules.
+
+### WA025 -- HTTP header name should be lowercase
+
+**Severity:** INFO
+
+HTTP header names are case-insensitive by the RFC, but it is conventional to use lowercase. This rule flags HTTP header names that include uppercase letters in CustomResponse headers or in ByteMatchStatement SearchString when the field is a header.
+
+**Triggers on:**
+
+```yaml
+  - ref: custom-response
+    Priority: 10
+    Action:
+      Block:
+        CustomResponse:
+          ResponseHeaders:
+            - Name: "X-Custom-Header"   # should be lowercase
+              Value: "blocked"
+    Statement:
+      IPSetReferenceStatement:
+        ARN: arn:...
+    VisibilityConfig:
+      SampledRequestsEnabled: true
+      CloudWatchMetricsEnabled: true
+      MetricName: CustomResp
+```
+
+**Fix:** Use lowercase header names:
+
+```yaml
+            - Name: "x-custom-header"
+              Value: "blocked"
+```
 
 ### WA154 -- RuleLabels uses reserved namespace
 
@@ -2000,6 +2043,72 @@ lists:
 
 **Fix:** Split the patterns across multiple regex pattern sets (each used by its own rule), or combine them into a single more-permissive regex (e.g. `^/(admin|wp-admin|phpmyadmin|…)`).
 
+### WA166 -- CIDR has host bits set in IP set
+
+**Severity:** WARNING
+
+An IPv4 or IPv6 CIDR in an IP Set has host bits set (i.e., bits after the prefix length that should be zero). For example, `10.0.0.1/24` should be `10.0.0.0/24`. Host bits waste space and suggest a misunderstanding of CIDR notation.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: allowed-ranges
+    kind: ip
+    items:
+      - ip: "10.0.0.1/24"    # host bits set; should be 10.0.0.0/24
+      - ip: "192.168.1.5/32" # OK (single host)
+      - ip: "2001:db8::1/48" # host bits set; should be 2001:db8::/48
+```
+
+**Fix:** Use canonical CIDR notation with host bits cleared:
+
+```yaml
+      - ip: "10.0.0.0/24"
+      - ip: "2001:db8::/48"
+```
+
+### WA167 -- Overlapping/duplicate CIDR across rules in same phase
+
+**Severity:** WARNING
+
+Two or more IP Set references in the same phase cover overlapping or identical CIDR ranges. This is usually a mistake — overlapping IP sets can mask rules higher in priority or create confusing behavior. Uses O(n log n) sweep-line algorithm for efficient detection across many IP Sets.
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocked-ips-1
+    kind: ip
+    items:
+      - ip: "10.0.0.0/8"
+
+  - name: blocked-ips-2
+    kind: ip
+    items:
+      - ip: "10.1.0.0/16"    # overlaps with 10.0.0.0/8
+      - ip: "10.1.0.0/16"    # duplicate entry within same set
+
+aws_waf_custom_rules:
+  - ref: block-bad-1
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      IPSetReferenceStatement:
+        ARN: arn:.../ipset/blocked-ips-1/...
+
+  - ref: block-bad-2
+    Priority: 20
+    Action:
+      Block: {}
+    Statement:
+      IPSetReferenceStatement:
+        ARN: arn:.../ipset/blocked-ips-2/...  # overlaps with rule 1
+```
+
+**Fix:** Consolidate overlapping IP Sets into a single list, or remove duplicates within a list.
+
 ### WA340 -- Estimated total WCU exceeds Web ACL limit
 
 **Severity:** WARNING
@@ -2129,6 +2238,186 @@ A `SizeConstraintStatement` with `Size: 0` and `ComparisonOperator: LT` is alway
 ```yaml
         ComparisonOperator: EQ    # matches empty body
         Size: 0
+```
+
+### WA344 -- Overly-permissive regex pattern
+
+**Severity:** WARNING
+
+A regex pattern is overly permissive and will match more traffic than intended. Patterns are evaluated against a set of known-permissive regexes (e.g., `..*` which matches any string, or patterns without anchors), as well as context-specific patterns for UriPath. This rule parallels CF548 from the Cloudflare provider.
+
+**Triggers on:**
+
+```yaml
+  - ref: uri-filter
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      RegexMatchStatement:
+        RegexString: ".*"  # matches everything; probably unintended
+        FieldToMatch:
+          UriPath: {}
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Use a more specific regex that matches only the paths you intend to block:
+
+```yaml
+        RegexString: "^/admin(/.*)?$"  # specific to admin paths
+```
+
+### WA345 -- Fully-anchored literal regex
+
+**Severity:** INFO
+
+A regex pattern is fully anchored (starts with `^` and ends with `$`) and contains only literal characters (no regex metacharacters). Such patterns are better implemented as `ByteMatchStatement` with `EXACTLY` constraint, which is faster and less error-prone.
+
+**Triggers on:**
+
+```yaml
+  - ref: exact-match
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      RegexMatchStatement:
+        RegexString: "^/api/admin$"  # fully anchored literal
+        FieldToMatch:
+          UriPath: {}
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Use `ByteMatchStatement` with `EXACTLY` instead:
+
+```yaml
+    Statement:
+      ByteMatchStatement:
+        SearchString: "/api/admin"
+        FieldToMatch:
+          UriPath: {}
+        PositionalConstraint: EXACTLY
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+### WA346 -- HTTP method in ByteMatchStatement SearchString should be uppercase
+
+**Severity:** WARNING
+
+A `ByteMatchStatement` with `FieldToMatch: HttpMethod` has a `SearchString` containing HTTP method names in lowercase (get, post, put, delete, etc.) when they should be uppercase (GET, POST, PUT, DELETE). AWS WAF normalizes HTTP methods to uppercase, so lowercase patterns will not match.
+
+**Triggers on:**
+
+```yaml
+  - ref: method-check
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      ByteMatchStatement:
+        SearchString: "post"  # should be "POST"
+        FieldToMatch:
+          HttpMethod: {}
+        PositionalConstraint: EXACTLY
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Use uppercase method names:
+
+```yaml
+        SearchString: "POST"
+```
+
+### WA347 -- UriPath SearchString should start with /
+
+**Severity:** WARNING
+
+A `ByteMatchStatement` or `RegexMatchStatement` with `FieldToMatch: UriPath` has a `SearchString` that does not start with `/`. Per AWS WAF documentation, UriPath always begins with `/`, so patterns without a leading slash will never match.
+
+**Triggers on:**
+
+```yaml
+  - ref: path-check
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      ByteMatchStatement:
+        SearchString: "admin"  # should start with /
+        FieldToMatch:
+          UriPath: {}
+        PositionalConstraint: CONTAINS
+        TextTransformations:
+          - Priority: 0
+            Type: NONE
+```
+
+**Fix:** Add a leading slash:
+
+```yaml
+        SearchString: "/admin"
+```
+
+### WA348 -- Contradictory ByteMatch in AndStatement
+
+**Severity:** WARNING
+
+An `AndStatement` contains two or more `ByteMatchStatement` entries on the same field, both using `EXACTLY` constraint, with different `SearchString` values and the same text transformations. Such a rule can never match (a field cannot be two different exact values at once).
+
+**Triggers on:**
+
+```yaml
+  - ref: contradictory
+    Priority: 10
+    Action:
+      Block: {}
+    Statement:
+      AndStatement:
+        Statements:
+          - ByteMatchStatement:
+              SearchString: "admin"
+              FieldToMatch:
+                UriPath: {}
+              PositionalConstraint: EXACTLY
+              TextTransformations:
+                - Priority: 0
+                  Type: NONE
+          - ByteMatchStatement:
+              SearchString: "login"  # same field, different value, both EXACTLY
+              FieldToMatch:
+                UriPath: {}
+              PositionalConstraint: EXACTLY
+              TextTransformations:
+                - Priority: 0
+                  Type: NONE
+```
+
+**Fix:** Use `CONTAINS` or other match types to allow both patterns, or split the rule to evaluate different fields:
+
+```yaml
+    Statement:
+      OrStatement:  # either path
+        Statements:
+          - ByteMatchStatement:
+              SearchString: "/admin"
+              FieldToMatch:
+                UriPath: {}
+              PositionalConstraint: EXACTLY
+              ...
+          - ByteMatchStatement:
+              SearchString: "/login"
+              FieldToMatch:
+                UriPath: {}
+              PositionalConstraint: EXACTLY
+              ...
 ```
 
 ---
