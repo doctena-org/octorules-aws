@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-05-18
+
+### Fixed
+- WA020 no longer false-fires on `CaptchaConfig` or `ChallengeConfig` —
+  both are valid AWS WAFv2 rule-level fields.
+
 ## [0.9.0] - 2026-05-04
 
 ### Added

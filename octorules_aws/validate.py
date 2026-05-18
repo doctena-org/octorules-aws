@@ -211,6 +211,8 @@ _VALID_RULE_FIELDS = frozenset(
         "Statement",
         "VisibilityConfig",
         "RuleLabels",
+        "CaptchaConfig",
+        "ChallengeConfig",
     }
 )
 

@@ -746,6 +746,21 @@ class TestUnknownFields:
         r = _rule(RuleLabels=[])
         assert_no_lint(validate_rules([r]), "WA020")
 
+    def test_wa020_captcha_config_valid(self):
+        """CaptchaConfig is a valid top-level field per AWS WAFv2 API spec."""
+        r = _rule(CaptchaConfig={"ImmunityTimeProperty": {"ImmunityTime": 60}})
+        assert_no_lint(validate_rules([r]), "WA020")
+
+    def test_wa020_challenge_config_valid(self):
+        """ChallengeConfig is a valid top-level field per AWS WAFv2 API spec."""
+        r = _rule(ChallengeConfig={"ImmunityTimeProperty": {"ImmunityTime": 60}})
+        assert_no_lint(validate_rules([r]), "WA020")
+
+    def test_wa020_truly_unknown_field_still_warns(self):
+        """Truly unknown fields still trigger WA020 warning."""
+        r = _rule(SomeMadeUpField="should warn")
+        assert_lint(validate_rules([r]), "WA020")
+
 
 # ---------------------------------------------------------------------------
 # WA021  Action/OverrideAction must be dict
