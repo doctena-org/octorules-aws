@@ -5,6 +5,7 @@ import re
 from contextvars import ContextVar
 
 from octorules.linter.engine import LintResult, Severity
+from octorules.linter.helpers import find_duplicate_priorities, find_first_priority_gap
 
 # Rule IDs emitted by validate_rules() — kept in sync with _rules.py by
 # test_plugin_rule_ids_match_metas.
@@ -641,6 +642,109 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
             )
 
 
+def _validate_custom_response_block(
+    block: dict, results: list[LintResult], phase: str, ref: str
+) -> None:
+    """WA353-WA357: validate a Block action's CustomResponse settings."""
+    cr = block.get("CustomResponse")
+    if not isinstance(cr, dict):
+        return
+
+    # WA353: CustomResponse status code
+    if "ResponseCode" in cr:
+        code = cr["ResponseCode"]
+        if not isinstance(code, int) or isinstance(code, bool) or code < 200 or code > 599:
+            results.append(
+                _result(
+                    rule_id="WA353",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"CustomResponse.ResponseCode must be an integer in 200-599, got {code!r}"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Action.Block.CustomResponse.ResponseCode",
+                )
+            )
+
+    # WA354: CustomResponse body size limit
+    body = cr.get("ResponseBody")
+    if body is not None:
+        byte_len = len(str(body).encode("utf-8"))
+        if byte_len > _MAX_CUSTOM_RESPONSE_BODY_BYTES:
+            results.append(
+                _result(
+                    rule_id="WA354",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"CustomResponse body exceeds"
+                        f" {_MAX_CUSTOM_RESPONSE_BODY_BYTES}-byte"
+                        f" limit ({byte_len} bytes)"
+                    ),
+                    phase=phase,
+                    ref=ref,
+                    field="Action.Block.CustomResponse.ResponseBody",
+                )
+            )
+
+    # WA355: CustomResponse header count limit
+    headers = cr.get("ResponseHeaders")
+    if isinstance(headers, list) and len(headers) > _MAX_CUSTOM_RESPONSE_HEADERS:
+        results.append(
+            _result(
+                rule_id="WA355",
+                severity=Severity.ERROR,
+                message=(
+                    f"CustomResponse exceeds"
+                    f" {_MAX_CUSTOM_RESPONSE_HEADERS} custom headers"
+                    f" ({len(headers)} found)"
+                ),
+                phase=phase,
+                ref=ref,
+                field="Action.Block.CustomResponse.ResponseHeaders",
+            )
+        )
+
+    # WA356: CustomResponse header name validation (RFC 7230 token)
+    if isinstance(headers, list):
+        for hdr in headers:
+            if not isinstance(hdr, dict):
+                continue
+            hdr_name = hdr.get("Name")
+            if isinstance(hdr_name, str) and not _HEADER_NAME_RE.match(hdr_name):
+                results.append(
+                    _result(
+                        rule_id="WA356",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"CustomResponse header name {hdr_name!r} is not a valid RFC 7230 token"
+                        ),
+                        phase=phase,
+                        ref=ref,
+                        field="Action.Block.CustomResponse.ResponseHeaders",
+                        suggestion=("Header names must match ^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$"),
+                    )
+                )
+
+    # WA357: CustomResponseBodyKey must be non-empty when present
+    body_key = cr.get("CustomResponseBodyKey")
+    if body_key is not None:
+        if not isinstance(body_key, str) or not body_key:
+            results.append(
+                _result(
+                    rule_id="WA357",
+                    severity=Severity.WARNING,
+                    message="CustomResponseBodyKey is empty",
+                    phase=phase,
+                    ref=ref,
+                    field="Action.Block.CustomResponse.CustomResponseBodyKey",
+                    suggestion=(
+                        "Provide a non-empty key referencing an entry in CustomResponseBodies"
+                    ),
+                )
+            )
+
+
 def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     """WA021/WA350/WA351/WA352/WA353/WA356/WA357 — Action parameter validation."""
     # WA021: Action/OverrideAction must be dict
@@ -701,116 +805,11 @@ def _check_action_params(rule: dict, results: list[LintResult], phase: str, ref:
                     )
                 )
 
-        # WA353/WA354/WA355: CustomResponse validation
+        # WA353-WA357: CustomResponse validation
         for action_key in ("Block",):
             block = action.get(action_key)
             if isinstance(block, dict):
-                cr = block.get("CustomResponse")
-                if isinstance(cr, dict):
-                    # WA353: CustomResponse status code
-                    if "ResponseCode" in cr:
-                        code = cr["ResponseCode"]
-                        if (
-                            not isinstance(code, int)
-                            or isinstance(code, bool)
-                            or code < 200
-                            or code > 599
-                        ):
-                            results.append(
-                                _result(
-                                    rule_id="WA353",
-                                    severity=Severity.ERROR,
-                                    message=(
-                                        f"CustomResponse.ResponseCode must be an integer"
-                                        f" in 200-599, got {code!r}"
-                                    ),
-                                    phase=phase,
-                                    ref=ref,
-                                    field="Action.Block.CustomResponse.ResponseCode",
-                                )
-                            )
-
-                    # WA354: CustomResponse body size limit
-                    body = cr.get("ResponseBody")
-                    if body is not None:
-                        byte_len = len(str(body).encode("utf-8"))
-                        if byte_len > _MAX_CUSTOM_RESPONSE_BODY_BYTES:
-                            results.append(
-                                _result(
-                                    rule_id="WA354",
-                                    severity=Severity.ERROR,
-                                    message=(
-                                        f"CustomResponse body exceeds"
-                                        f" {_MAX_CUSTOM_RESPONSE_BODY_BYTES}-byte"
-                                        f" limit ({byte_len} bytes)"
-                                    ),
-                                    phase=phase,
-                                    ref=ref,
-                                    field="Action.Block.CustomResponse.ResponseBody",
-                                )
-                            )
-
-                    # WA355: CustomResponse header count limit
-                    headers = cr.get("ResponseHeaders")
-                    if isinstance(headers, list) and len(headers) > _MAX_CUSTOM_RESPONSE_HEADERS:
-                        results.append(
-                            _result(
-                                rule_id="WA355",
-                                severity=Severity.ERROR,
-                                message=(
-                                    f"CustomResponse exceeds"
-                                    f" {_MAX_CUSTOM_RESPONSE_HEADERS} custom headers"
-                                    f" ({len(headers)} found)"
-                                ),
-                                phase=phase,
-                                ref=ref,
-                                field="Action.Block.CustomResponse.ResponseHeaders",
-                            )
-                        )
-
-                    # WA356: CustomResponse header name validation (RFC 7230 token)
-                    if isinstance(headers, list):
-                        for hdr in headers:
-                            if not isinstance(hdr, dict):
-                                continue
-                            hdr_name = hdr.get("Name")
-                            if isinstance(hdr_name, str) and not _HEADER_NAME_RE.match(hdr_name):
-                                results.append(
-                                    _result(
-                                        rule_id="WA356",
-                                        severity=Severity.ERROR,
-                                        message=(
-                                            f"CustomResponse header name {hdr_name!r}"
-                                            f" is not a valid RFC 7230 token"
-                                        ),
-                                        phase=phase,
-                                        ref=ref,
-                                        field="Action.Block.CustomResponse.ResponseHeaders",
-                                        suggestion=(
-                                            "Header names must match"
-                                            " ^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$"
-                                        ),
-                                    )
-                                )
-
-                    # WA357: CustomResponseBodyKey must be non-empty when present
-                    body_key = cr.get("CustomResponseBodyKey")
-                    if body_key is not None:
-                        if not isinstance(body_key, str) or not body_key:
-                            results.append(
-                                _result(
-                                    rule_id="WA357",
-                                    severity=Severity.WARNING,
-                                    message="CustomResponseBodyKey is empty",
-                                    phase=phase,
-                                    ref=ref,
-                                    field="Action.Block.CustomResponse.CustomResponseBodyKey",
-                                    suggestion=(
-                                        "Provide a non-empty key referencing an entry"
-                                        " in CustomResponseBodies"
-                                    ),
-                                )
-                            )
+                _validate_custom_response_block(block, results, phase, ref)
 
     if "OverrideAction" in rule and isinstance(rule["OverrideAction"], dict):
         override = rule["OverrideAction"]
@@ -2076,18 +2075,25 @@ def _check_arns(
 
 # --- WCU estimation (WA340) -------------------------------------------------
 
-# Base WCU costs per statement type. Types with TextTransformations get
-# +1 per transformation on top of the base.
+# Base WCU costs per statement type, per the AWS WAF developer guide
+# (the "Rule statement characteristics > WCUs" line on each statement's
+# page). Some statements adjust the base by their settings:
+#   - ByteMatchStatement: 2, but 10 for CONTAINS / CONTAINS_WORD
+#   - SqliMatchStatement: 20 (LOW, the default), 30 for HIGH sensitivity
+#   - IPSetReferenceStatement: +4 with forwarded-IP position ANY
+# On top of the base, statements that operate on a request component pay
+# +10 per text transformation, +10 for the All-query-parameters component,
+# and double the base for the JSON-body component.
 _WCU_BASE: dict[str, int] = {
     "AsnMatchStatement": 1,
     "ByteMatchStatement": 2,
     "RegexMatchStatement": 3,
-    "RegexPatternSetReferenceStatement": 5,
-    "GeoMatchStatement": 2,
+    "RegexPatternSetReferenceStatement": 25,
+    "GeoMatchStatement": 1,
     "IPSetReferenceStatement": 1,
-    "SizeConstraintStatement": 2,
-    "SqliMatchStatement": 15,
-    "XssMatchStatement": 15,
+    "SizeConstraintStatement": 1,
+    "SqliMatchStatement": 20,
+    "XssMatchStatement": 40,
     "LabelMatchStatement": 1,
     # ManagedRuleGroupStatement: per-group lookup; see _MANAGED_RULE_GROUP_WCU.
     # Marketplace vendors and unknown AWS groups fall back to this default.
@@ -2176,7 +2182,8 @@ def _estimate_managed_rule_group_wcu(inner: dict) -> int:
     return _WCU_BASE["ManagedRuleGroupStatement"]
 
 
-# Statement types where each TextTransformation adds +1 WCU
+# Statement types that operate on a request component: +10 WCU per
+# TextTransformation, +10 for All query parameters, double base for JSON body
 _WCU_TEXT_TRANSFORM_TYPES = frozenset(
     {
         "ByteMatchStatement",
@@ -2220,6 +2227,9 @@ def _estimate_wcu(statement: dict) -> int:
             if not isinstance(inner, dict):
                 return 2
             cost = 2
+            custom_keys = inner.get("CustomKeys")
+            if isinstance(custom_keys, list):
+                cost += 30 * len(custom_keys)
             sds = inner.get("ScopeDownStatement")
             if isinstance(sds, dict):
                 cost += _estimate_wcu(sds)
@@ -2229,10 +2239,28 @@ def _estimate_wcu(statement: dict) -> int:
         if stype == "ManagedRuleGroupStatement":
             return _estimate_managed_rule_group_wcu(inner if isinstance(inner, dict) else {})
         base = _WCU_BASE.get(stype, 1)
-        if stype in _WCU_TEXT_TRANSFORM_TYPES and isinstance(inner, dict):
-            tts = inner.get("TextTransformations", [])
-            if isinstance(tts, list):
-                base += len(tts)
+        if isinstance(inner, dict):
+            if stype == "ByteMatchStatement" and inner.get("PositionalConstraint") in (
+                "CONTAINS",
+                "CONTAINS_WORD",
+            ):
+                base = 10
+            elif stype == "SqliMatchStatement" and inner.get("SensitivityLevel") == "HIGH":
+                base = 30
+            elif stype == "IPSetReferenceStatement":
+                fwd = inner.get("IPSetForwardedIPConfig")
+                if isinstance(fwd, dict) and fwd.get("Position") == "ANY":
+                    base += 4
+            if stype in _WCU_TEXT_TRANSFORM_TYPES:
+                ftm = inner.get("FieldToMatch")
+                if isinstance(ftm, dict):
+                    if "JsonBody" in ftm:
+                        base *= 2
+                    elif "AllQueryArguments" in ftm:
+                        base += 10
+                tts = inner.get("TextTransformations", [])
+                if isinstance(tts, list):
+                    base += 10 * len(tts)
         return base
 
     # Empty statement dict
@@ -2495,16 +2523,15 @@ def _check_duplicate_priorities(
     results: list[LintResult],
     phase: str,
 ) -> None:
-    for pri, refs in sorted(seen.items()):
-        if len(refs) > 1:
-            results.append(
-                _result(
-                    rule_id="WA101",
-                    severity=Severity.ERROR,
-                    message=f"Duplicate Priority {pri} in rules: {', '.join(refs)}",
-                    phase=phase,
-                )
+    for pri, refs in find_duplicate_priorities(seen):
+        results.append(
+            _result(
+                rule_id="WA101",
+                severity=Severity.ERROR,
+                message=f"Duplicate Priority {pri} in rules: {', '.join(refs)}",
+                phase=phase,
             )
+        )
 
 
 def _check_priority_gaps(
@@ -2513,20 +2540,16 @@ def _check_priority_gaps(
     phase: str,
 ) -> None:
     """WA102: Warn if any gap > 1 between sorted priority values."""
-    pris = sorted(seen_priorities.keys())
-    if len(pris) < 2:
-        return
-    for i in range(len(pris) - 1):
-        if pris[i + 1] - pris[i] > 1:
-            results.append(
-                _result(
-                    rule_id="WA102",
-                    severity=Severity.INFO,
-                    message=f"Priority gap between {pris[i]} and {pris[i + 1]}",
-                    phase=phase,
-                )
+    gap = find_first_priority_gap(seen_priorities.keys())
+    if gap is not None:
+        results.append(
+            _result(
+                rule_id="WA102",
+                severity=Severity.INFO,
+                message=f"Priority gap between {gap[0]} and {gap[1]}",
+                phase=phase,
             )
-            break  # Only warn once per phase
+        )
 
 
 def _check_duplicate_metrics(

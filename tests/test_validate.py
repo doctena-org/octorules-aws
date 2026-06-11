@@ -3288,8 +3288,8 @@ class TestWcuEstimation:
                 "SearchString": "bad",
             }
         }
-        # Base 2 + 1 text transformation = 3
-        assert _estimate_wcu(stmt) == 3
+        # Contains base 10 + 10 per text transformation = 20
+        assert _estimate_wcu(stmt) == 20
 
     def test_byte_match_multiple_transforms(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3305,14 +3305,14 @@ class TestWcuEstimation:
                 "SearchString": "bad",
             }
         }
-        # Base 2 + 2 text transformations = 4
-        assert _estimate_wcu(stmt) == 4
+        # Contains base 10 + 2 x 10 per text transformation = 30
+        assert _estimate_wcu(stmt) == 30
 
     def test_geo_match(self):
         from octorules_aws.validate import _estimate_wcu
 
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US", "CA"]}}
-        assert _estimate_wcu(stmt) == 2
+        assert _estimate_wcu(stmt) == 1
 
     def test_ipset_reference(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3333,8 +3333,109 @@ class TestWcuEstimation:
                 "TextTransformations": [{"Priority": 0, "Type": "URL_DECODE"}],
             }
         }
-        # Base 15 + 1 text transformation = 16
-        assert _estimate_wcu(stmt) == 16
+        # Low-sensitivity base 20 + 10 per text transformation = 30
+        assert _estimate_wcu(stmt) == 30
+
+    def test_byte_match_exact_base(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [],
+                "PositionalConstraint": "EXACTLY",
+                "SearchString": "/health",
+            }
+        }
+        # Exactly/starts-with/ends-with keep the 2-WCU base
+        assert _estimate_wcu(stmt) == 2
+
+    def test_sqli_high_sensitivity(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "SqliMatchStatement": {
+                "FieldToMatch": {"QueryString": {}},
+                "SensitivityLevel": "HIGH",
+            }
+        }
+        assert _estimate_wcu(stmt) == 30
+
+    def test_xss_match(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {"XssMatchStatement": {"FieldToMatch": {"QueryString": {}}}}
+        assert _estimate_wcu(stmt) == 40
+
+    def test_regex_pattern_set_reference(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "RegexPatternSetReferenceStatement": {
+                "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/regexpatternset/t/a",
+                "FieldToMatch": {"UriPath": {}},
+                "TextTransformations": [],
+            }
+        }
+        assert _estimate_wcu(stmt) == 25
+
+    def test_json_body_doubles_base(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"JsonBody": {"MatchScope": "ALL"}},
+                "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
+                "PositionalConstraint": "EXACTLY",
+                "SearchString": "x",
+            }
+        }
+        # Base 2 doubled for JSON body, then +10 per transformation
+        assert _estimate_wcu(stmt) == 14
+
+    def test_all_query_arguments_adds_ten(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "ByteMatchStatement": {
+                "FieldToMatch": {"AllQueryArguments": {}},
+                "TextTransformations": [],
+                "PositionalConstraint": "EXACTLY",
+                "SearchString": "x",
+            }
+        }
+        assert _estimate_wcu(stmt) == 12
+
+    def test_ipset_forwarded_any_adds_four(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "IPSetReferenceStatement": {
+                "ARN": "arn:aws:wafv2:us-east-1:123456789:regional/ipset/t/a",
+                "IPSetForwardedIPConfig": {
+                    "HeaderName": "X-Forwarded-For",
+                    "FallbackBehavior": "MATCH",
+                    "Position": "ANY",
+                },
+            }
+        }
+        assert _estimate_wcu(stmt) == 5
+
+    def test_rate_based_custom_keys(self):
+        from octorules_aws.validate import _estimate_wcu
+
+        stmt = {
+            "RateBasedStatement": {
+                "Limit": 200,
+                "AggregateKeyType": "CUSTOM_KEYS",
+                "CustomKeys": [
+                    {"Header": {"Name": "x-api-key", "TextTransformations": []}},
+                    {"UriPath": {"TextTransformations": []}},
+                ],
+            }
+        }
+        # 2 base + 30 per custom aggregation key
+        assert _estimate_wcu(stmt) == 62
 
     def test_managed_rule_group_estimate_uses_published_table(self):
         """ManagedRuleGroupStatement uses a per-group lookup; Core Rule Set
@@ -3360,8 +3461,8 @@ class TestWcuEstimation:
                 ]
             }
         }
-        # 1 (And base) + 2 (Geo) + 1 (IPSet) = 4
-        assert _estimate_wcu(stmt) == 4
+        # 1 (And base) + 1 (Geo) + 1 (IPSet) = 3
+        assert _estimate_wcu(stmt) == 3
 
     def test_or_statement(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3374,15 +3475,15 @@ class TestWcuEstimation:
                 ]
             }
         }
-        # 1 (Or base) + 2 (Geo) + 1 (Label) = 4
-        assert _estimate_wcu(stmt) == 4
+        # 1 (Or base) + 1 (Geo) + 1 (Label) = 3
+        assert _estimate_wcu(stmt) == 3
 
     def test_not_statement(self):
         from octorules_aws.validate import _estimate_wcu
 
         stmt = {"NotStatement": {"Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}}}}
-        # 1 (Not base) + 2 (Geo) = 3
-        assert _estimate_wcu(stmt) == 3
+        # 1 (Not base) + 1 (Geo) = 2
+        assert _estimate_wcu(stmt) == 2
 
     def test_rate_based_with_scope_down(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3401,8 +3502,8 @@ class TestWcuEstimation:
                 },
             }
         }
-        # 2 (Rate base) + 2 (ByteMatch base) + 1 (transform) = 5
-        assert _estimate_wcu(stmt) == 5
+        # 2 (Rate base) + 10 (ByteMatch contains) + 10 (transform) = 22
+        assert _estimate_wcu(stmt) == 22
 
     def test_rate_based_without_scope_down(self):
         from octorules_aws.validate import _estimate_wcu
@@ -3423,8 +3524,8 @@ class TestWcuEstimation:
             "ref": "test",
             "Statement": {"GeoMatchStatement": {"CountryCodes": ["US"]}},
         }
-        # 1 (rule base) + 2 (Geo) = 3
-        assert _estimate_rule_wcu(rule) == 3
+        # 1 (rule base) + 1 (Geo) = 2
+        assert _estimate_rule_wcu(rule) == 2
 
     def test_rule_wcu_missing_statement(self):
         from octorules_aws.validate import _estimate_rule_wcu
@@ -4202,8 +4303,8 @@ class TestRegexMatchWcu:
                 "TextTransformations": [{"Priority": 0, "Type": "NONE"}],
             }
         }
-        # Base 3 + 1 text transformation = 4
-        assert _estimate_wcu(stmt) == 4
+        # Base 3 + 10 per text transformation = 13
+        assert _estimate_wcu(stmt) == 13
 
     def test_regex_match_multiple_transforms_wcu(self):
         from octorules_aws.validate import _estimate_wcu
@@ -4219,8 +4320,8 @@ class TestRegexMatchWcu:
                 ],
             }
         }
-        # Base 3 + 3 text transformations = 6
-        assert _estimate_wcu(stmt) == 6
+        # Base 3 + 3 x 10 per text transformation = 33
+        assert _estimate_wcu(stmt) == 33
 
 
 # ---------------------------------------------------------------------------

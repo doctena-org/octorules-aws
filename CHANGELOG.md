@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-06-11
+
+### Changed
+- Minimum `octorules` dependency: `>=0.29.0`.
+
+### Fixed
+- **WA167** (cross-rule IP set overlap) never fired; it now flags a
+  lower-priority rule whose IP set CIDRs are contained by those of a
+  higher-priority rule with a terminating action. Expect new WARNINGs
+  on rule suites with overlapping IP sets.
+- **WA340**'s WCU estimates now match AWS's documented costs. The old
+  estimates ran far too low; Web ACLs near the capacity limit may
+  newly trigger it.
+
 ## [0.9.1] - 2026-05-18
 
 ### Fixed

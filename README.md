@@ -191,14 +191,14 @@ IP lists (`kind: ip`) map to AWS WAF IP Sets. Regex lists (`kind: regex`) map to
 
 | Prefix | Category | Rules |
 |--------|----------|-------|
-| WA001-WA005, WA010, WA020-WA025, WA154 | Structure & YAML | 13 |
-| WA100-WA102 | Priority | 3 |
-| WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA348 | Statement deep validation | 52 |
-| WA350-WA357 | Action parameters | 8 |
-| WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA162-WA167, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 14 |
-| WA600-WA602 | Best practice | 3 |
+| WA001–WA003, WA010, WA020–WA024, WA154 | Structure | 10 |
+| WA025 | Style | 1 |
+| WA100–WA102 | Priority | 3 |
+| WA004–WA005, WA200–WA201, WA350–WA357 | Action | 12 |
+| WA400–WA402, WA500–WA501 | Visibility | 5 |
+| WA156–WA157, WA159–WA161, WA300–WA325, WA328, WA330–WA332, WA334–WA339, WA341–WA348 | Statement | 49 |
+| WA158, WA162–WA167, WA326–WA327, WA340, WA520, WA603 | Cross-rule | 12 |
+| WA600–WA602 | Best practice | 3 |
 
 ```bash
 octorules lint --config config.yaml

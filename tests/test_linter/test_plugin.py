@@ -1468,3 +1468,202 @@ class TestWA603Unreachable:
         aws_lint(rules_data, ctx)
         wa603 = [r for r in ctx.results if r.rule_id == "WA603"]
         assert len(wa603) == 2
+
+
+class TestCrossRuleIPSetOverlap:
+    """WA167: overlapping CIDRs across rules referencing IP sets."""
+
+    @staticmethod
+    def _ipset_rule(ref: str, priority: int, action: str, set_name: str) -> dict:
+        return {
+            "ref": ref,
+            "Priority": priority,
+            "Action": {action: {}},
+            "Statement": {
+                "IPSetReferenceStatement": {
+                    "ARN": (
+                        f"arn:aws:wafv2:us-east-1:123456789012:regional/ipset/{set_name}/a1b2c3d4"
+                    )
+                }
+            },
+        }
+
+    @staticmethod
+    def _data(rules: list, lists: list) -> dict:
+        return {"aws_waf_custom_rules": rules, "lists": lists}
+
+    def test_fires_across_different_sets(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "seta"),
+                self._ipset_rule("allower", 1, "Allow", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["10.0.0.0/8"]},
+                {"name": "setb", "kind": "ip", "items": ["10.1.0.0/16"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        wa167 = [r for r in ctx.results if r.rule_id == "WA167"]
+        assert len(wa167) == 1
+        assert wa167[0].ref == "allower"
+        assert "blocker" in wa167[0].message
+        assert "10.0.0.0/8" in wa167[0].message
+        assert "10.1.0.0/16" in wa167[0].message
+
+    def test_fires_for_same_set_shared_by_two_rules(self):
+        # Same set means identical CIDRs: total shadowing, no internal
+        # overlap required (the pre-rewrite implementation missed this).
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "shared"),
+                self._ipset_rule("counter", 5, "Count", "shared"),
+            ],
+            [{"name": "shared", "kind": "ip", "items": ["192.0.2.0/24"]}],
+        )
+        aws_lint(rules_data, ctx)
+        wa167 = [r for r in ctx.results if r.rule_id == "WA167"]
+        assert len(wa167) == 1
+        assert wa167[0].ref == "counter"
+
+    def test_silent_for_disjoint_sets(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "seta"),
+                self._ipset_rule("allower", 1, "Allow", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["10.0.0.0/8"]},
+                {"name": "setb", "kind": "ip", "items": ["172.16.0.0/12"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        assert not [r for r in ctx.results if r.rule_id == "WA167"]
+
+    def test_silent_when_higher_priority_action_is_not_terminating(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("counter", 0, "Count", "seta"),
+                self._ipset_rule("blocker", 1, "Block", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["10.0.0.0/8"]},
+                {"name": "setb", "kind": "ip", "items": ["10.1.0.0/16"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        # Count lets traffic continue to the lower-priority rule: no shadowing.
+        assert not [r for r in ctx.results if r.rule_id == "WA167"]
+
+    def test_pair_reported_once_despite_multiple_overlaps(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "seta"),
+                self._ipset_rule("allower", 1, "Allow", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["10.0.0.0/8", "172.16.0.0/12"]},
+                {"name": "setb", "kind": "ip", "items": ["10.1.0.0/16", "172.16.5.0/24"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        wa167 = [r for r in ctx.results if r.rule_id == "WA167"]
+        assert len(wa167) == 1
+
+    def test_fires_for_ipv6_overlap(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "seta"),
+                self._ipset_rule("allower", 1, "Allow", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["2001:db8::/32"]},
+                {"name": "setb", "kind": "ip", "items": ["2001:db8:1::/48"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        assert len([r for r in ctx.results if r.rule_id == "WA167"]) == 1
+
+    def test_silent_for_same_rule_referencing_overlapping_sets(self):
+        ctx = LintContext()
+        rule = {
+            "ref": "both",
+            "Priority": 0,
+            "Action": {"Block": {}},
+            "Statement": {
+                "AndStatement": {
+                    "Statements": [
+                        {
+                            "IPSetReferenceStatement": {
+                                "ARN": (
+                                    "arn:aws:wafv2:us-east-1:123456789012:regional/ipset/seta/a1"
+                                )
+                            }
+                        },
+                        {
+                            "IPSetReferenceStatement": {
+                                "ARN": (
+                                    "arn:aws:wafv2:us-east-1:123456789012:regional/ipset/setb/b2"
+                                )
+                            }
+                        },
+                    ]
+                }
+            },
+        }
+        rules_data = self._data(
+            [rule],
+            [
+                {"name": "seta", "kind": "ip", "items": ["10.0.0.0/8"]},
+                {"name": "setb", "kind": "ip", "items": ["10.1.0.0/16"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        assert not [r for r in ctx.results if r.rule_id == "WA167"]
+
+    def test_many_rules_sharing_large_set_stays_fast(self):
+        # Perf regression guard: cost must not scale with rules x CIDRs.
+        # The sweep runs over distinct (set, CIDR) entries and rules are
+        # paired per overlapping set pair — a quadratic implementation
+        # (per-rule entry expansion or per-CIDR rule pairing) takes many
+        # seconds on this input; the set-level sweep takes milliseconds.
+        import time
+
+        n_rules, n_cidrs = 100, 3000
+        items = [f"10.{i // 250}.{i % 250}.0/24" for i in range(n_cidrs)]
+        rules = [
+            self._ipset_rule(f"r{i}", i, "Block" if i == 0 else "Count", "big")
+            for i in range(n_rules)
+        ]
+        rules_data = self._data(rules, [{"name": "big", "kind": "ip", "items": items}])
+        ctx = LintContext()
+        start = time.monotonic()
+        aws_lint(rules_data, ctx)
+        elapsed = time.monotonic() - start
+        wa167 = [r for r in ctx.results if r.rule_id == "WA167"]
+        # r0 (Block, priority 0) shadows every later rule; Count rules
+        # shadow nothing.
+        assert len(wa167) == n_rules - 1
+        assert elapsed < 2.0, f"WA167 took {elapsed:.2f}s on 100 rules x 3000 CIDRs"
+
+    def test_catch_all_entries_ignored(self):
+        ctx = LintContext()
+        rules_data = self._data(
+            [
+                self._ipset_rule("blocker", 0, "Block", "seta"),
+                self._ipset_rule("allower", 1, "Allow", "setb"),
+            ],
+            [
+                {"name": "seta", "kind": "ip", "items": ["0.0.0.0/0"]},
+                {"name": "setb", "kind": "ip", "items": ["10.1.0.0/16"]},
+            ],
+        )
+        aws_lint(rules_data, ctx)
+        # 0.0.0.0/0 overlaps everything; WA163 owns catch-alls.
+        assert not [r for r in ctx.results if r.rule_id == "WA167"]

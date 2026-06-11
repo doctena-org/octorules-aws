@@ -153,14 +153,14 @@ Suppressed findings are excluded from the report but counted in the summary line
 
 | WA Range | Category | Rules |
 |----------|----------|-------|
-| WA001-WA005, WA010, WA020-WA025, WA154 | Structure & YAML | 13 |
-| WA100-WA102 | Priority | 3 |
-| WA200-WA201 | Action type | 2 |
-| WA156-WA161, WA300-WA348 | Statement validation | 52 |
-| WA350-WA357 | Action parameters | 8 |
-| WA400-WA402 | VisibilityConfig | 3 |
-| WA158, WA162-WA167, WA326-WA327, WA340, WA500-WA501, WA520, WA603 | Cross-rule | 14 |
-| WA600-WA602 | Best practice | 3 |
+| WA001–WA003, WA010, WA020–WA024, WA154 | Structure | 10 |
+| WA025 | Style | 1 |
+| WA100–WA102 | Priority | 3 |
+| WA004–WA005, WA200–WA201, WA350–WA357 | Action | 12 |
+| WA400–WA402, WA500–WA501 | Visibility | 5 |
+| WA156–WA157, WA159–WA161, WA300–WA325, WA328, WA330–WA332, WA334–WA339, WA341–WA348 | Statement | 49 |
+| WA158, WA162–WA167, WA326–WA327, WA340, WA520, WA603 | Cross-rule | 12 |
+| WA600–WA602 | Best practice | 3 |
 
 ---
 
@@ -622,7 +622,7 @@ Each `Statement` dict must contain exactly one key identifying its type. Multipl
 
 **Severity:** WARNING
 
-The statement type key is not in the recognized set of AWS WAF statement types. This may indicate a typo or an unsupported statement type. Recognized types: `AndStatement`, `ByteMatchStatement`, `GeoMatchStatement`, `IPSetReferenceStatement`, `LabelMatchStatement`, `ManagedRuleGroupStatement`, `NotStatement`, `OrStatement`, `RateBasedStatement`, `RegexMatchStatement`, `RegexPatternSetReferenceStatement`, `RuleGroupReferenceStatement`, `SizeConstraintStatement`, `SqliMatchStatement`, `XssMatchStatement`.
+The statement type key is not in the recognized set of AWS WAF statement types. This may indicate a typo or an unsupported statement type. Recognized types: `AndStatement`, `AsnMatchStatement`, `ByteMatchStatement`, `GeoMatchStatement`, `IPSetReferenceStatement`, `LabelMatchStatement`, `ManagedRuleGroupStatement`, `NotStatement`, `OrStatement`, `RateBasedStatement`, `RegexMatchStatement`, `RegexPatternSetReferenceStatement`, `RuleGroupReferenceStatement`, `SizeConstraintStatement`, `SqliMatchStatement`, `XssMatchStatement`.
 
 **Triggers on:**
 
@@ -2072,7 +2072,7 @@ lists:
 
 **Severity:** WARNING
 
-Two or more IP Set references in the same phase cover overlapping or identical CIDR ranges. This is usually a mistake — overlapping IP sets can mask rules higher in priority or create confusing behavior. Uses O(n log n) sweep-line algorithm for efficient detection across many IP Sets.
+A higher-priority rule with a terminating action (Allow, Block, Captcha, Challenge) references an IP set whose CIDRs contain or equal CIDRs referenced by a lower-priority rule — the same set or a different one. The lower-priority rule never sees the overlapping traffic. Fires once per shadowed rule pair, on the shadowed rule's ref. Catch-all entries (`0.0.0.0/0`, `::/0`) are excluded (WA163 owns them). Detection is a single sweep over all referenced CIDRs (sorted broadest-first with an ancestor stack), so large rule suites stay fast.
 
 **Triggers on:**
 
@@ -2129,23 +2129,26 @@ set_managed_rule_group_wcu_overrides({
 
 | Statement | Base WCU |
 |-----------|----------|
-| ByteMatchStatement | 2 + (1 per TextTransformation) |
-| RegexMatchStatement | 5 + (1 per TextTransformation) |
-| RegexPatternSetReferenceStatement | 5 |
-| GeoMatchStatement | 2 |
-| IPSetReferenceStatement | 1 |
-| SizeConstraintStatement | 2 + (1 per TextTransformation) |
-| SqliMatchStatement | 15 + (1 per TextTransformation) |
-| XssMatchStatement | 15 + (1 per TextTransformation) |
+| ByteMatchStatement | 2 (`EXACTLY`/`STARTS_WITH`/`ENDS_WITH`) or 10 (`CONTAINS`/`CONTAINS_WORD`) |
+| RegexMatchStatement | 3 |
+| RegexPatternSetReferenceStatement | 25 |
+| GeoMatchStatement | 1 |
+| IPSetReferenceStatement | 1 (+4 with forwarded-IP position `ANY`) |
+| SizeConstraintStatement | 1 |
+| SqliMatchStatement | 20 (`LOW` sensitivity, the default) or 30 (`HIGH`) |
+| XssMatchStatement | 40 |
 | LabelMatchStatement | 1 |
+| AsnMatchStatement | 1 |
 | ManagedRuleGroupStatement | per-group lookup (AWS-vendored) or 100 (default) |
 | RuleGroupReferenceStatement | 1 |
-| RateBasedStatement | 2 + ScopeDownStatement cost |
+| RateBasedStatement | 2 + 30 per custom aggregation key + ScopeDownStatement cost |
 | AndStatement | 1 + sum of nested costs |
 | OrStatement | 1 + sum of nested costs |
 | NotStatement | 1 + nested cost |
 
-Each rule also adds 1 base WCU.
+Statements that inspect a request component additionally pay +10 WCU per
+`TextTransformation`, +10 for the All-query-parameters component, and double
+their base cost for the JSON-body component. Each rule also adds 1 base WCU.
 
 **Triggers on:** Web ACL with many managed rule groups or complex custom rules.
 
@@ -2164,6 +2167,8 @@ providers:
 **Severity:** WARNING
 
 A `GeoMatchStatement` lists 200 or more country codes, covering nearly all countries. This condition will match virtually all requests and is likely unintentional.
+
+> **Note:** The 200-code threshold is an octorules heuristic, not an AWS limit. AWS imposes no such cap; the value is chosen to approximate "essentially every country" (the ISO 3166 list has ~250 codes).
 
 **Triggers on:**
 

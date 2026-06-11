@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
+from octorules.linter.helpers import CATCH_ALL_CIDRS
 from octorules.phases import PHASE_BY_NAME
 from octorules.reserved_ips import is_reserved
 
@@ -41,8 +42,6 @@ _PLUGIN_RULE_IDS: frozenset[str] = frozenset(
         "WA603",
     }
 )
-
-_CATCH_ALL_CIDRS = frozenset({"0.0.0.0/0", "::/0"})
 
 AWS_RULE_IDS: frozenset[str] = _validate_ids | _PLUGIN_RULE_IDS
 
@@ -475,7 +474,7 @@ def _check_list_catch_all(rules_data: dict[str, Any], ctx: LintContext) -> None:
     for name, items in _iter_ip_lists(rules_data):
         for item in items:
             item_str = str(item).strip()
-            if item_str in _CATCH_ALL_CIDRS:
+            if item_str in CATCH_ALL_CIDRS:
                 ctx.add(
                     LintResult(
                         rule_id="WA163",
@@ -529,7 +528,7 @@ def _check_list_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> N
         v6: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
         for item in items:
             item_str = str(item).strip()
-            if not item_str or item_str in _CATCH_ALL_CIDRS:
+            if not item_str or item_str in CATCH_ALL_CIDRS:
                 # Catch-all is handled by WA163; bare 0/0 would dominate every
                 # other entry and produce overlap noise.  Skip it here.
                 continue
@@ -551,7 +550,7 @@ def _check_ipset_host_bits(rules_data: dict[str, Any], ctx: LintContext) -> None
     for name, items in _iter_ip_lists(rules_data):
         for item in items:
             item_str = str(item).strip()
-            if not item_str or item_str in _CATCH_ALL_CIDRS:
+            if not item_str or item_str in CATCH_ALL_CIDRS:
                 continue
             if "/" not in item_str:
                 continue
@@ -579,15 +578,21 @@ def _check_ipset_host_bits(rules_data: dict[str, Any], ctx: LintContext) -> None
 
 
 def _check_cross_rule_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> None:
-    """WA167: Detect overlapping CIDR entries across rules that reference IP sets.
+    """WA167: overlapping CIDR entries across rules that reference IP sets.
 
-    When rule A has a terminating action (Allow, Block, Captcha, Challenge)
-    and rule B has overlapping IPs at higher priority, rule B's traffic is
-    shadowed by rule A. This uses a sweep-line algorithm O(n log n).
+    When a higher-priority rule with a terminating action (Allow, Block,
+    Captcha, Challenge) references an IP set whose CIDRs contain or equal
+    CIDRs of a set referenced by a lower-priority rule — the same set or a
+    different one — the lower-priority rule never sees that traffic.
+
+    Cost is independent of how many rules share a set: the sweep runs over
+    DISTINCT (set, CIDR) entries to find overlapping set pairs (CIDRs nest
+    or are disjoint, never partially overlap), and rules are then paired
+    only for sets that actually overlap, once per shadowed rule pair.
     """
-    # Collect (rule_ref, priority, action, ipset_name) for all rules that reference IP sets
-    rule_entries: list[tuple[str, int, str, str, dict]] = []
-
+    # 1. Which rules reference which IP sets?
+    rules_by_set: dict[str, list[tuple[str, int, str]]] = {}
+    n_references = 0
     for phase_name, rules in rules_data.items():
         if phase_name not in _AWS_PHASE_NAMES:
             continue
@@ -597,7 +602,6 @@ def _check_cross_rule_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext
             continue
         if not isinstance(rules, list):
             continue
-
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
@@ -605,121 +609,121 @@ def _check_cross_rule_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext
             priority = rule.get("Priority")
             if not isinstance(priority, int) or priority < 0:
                 continue
-
             stmt = rule.get("Statement")
             if not isinstance(stmt, dict):
                 continue
-
             action = rule.get("Action", {})
-            if isinstance(action, dict):
-                action_name = next(iter(action.keys())) if action else ""
-            else:
-                action_name = ""
-
-            # Collect IP set references from statement
-            ipset_arns = _collect_ipset_arns_from_statement(stmt)
-            for arn in ipset_arns:
+            action_name = next(iter(action)) if isinstance(action, dict) and action else ""
+            for arn in _collect_ipset_arns_from_statement(stmt):
                 match = _IPSET_ARN_RE.match(arn)
                 if match:
-                    ipset_name = match.group(1)
-                    rule_entries.append((ref, priority, action_name, ipset_name, rule))
+                    rules_by_set.setdefault(match.group(1), []).append((ref, priority, action_name))
+                    n_references += 1
 
-    if len(rule_entries) < 2:
+    if n_references < 2:
         return
 
-    # Group by IP set name — we can only compare rules referencing the same set
-    from collections import defaultdict
-
-    by_set: dict[str, list[tuple[str, int, str, dict]]] = defaultdict(list)
-    for ref, priority, action_name, ipset_name, rule in rule_entries:
-        by_set[ipset_name].append((ref, priority, action_name, rule))
-
-    # For each IP set, collect its items and run the cross-rule overlap check
-    ip_list_map = {name: items for name, items in _iter_ip_lists(rules_data)}
-
-    for ipset_name, rule_refs in by_set.items():
-        if len(rule_refs) < 2:
-            continue  # Need at least 2 rules to have overlap
-
-        # Get IP set items
-        ipset_items = ip_list_map.get(ipset_name, [])
-        if not ipset_items:
-            continue
-
-        # Parse all CIDR entries in the IP set
-        cidrs: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-        for item_str in ipset_items:
-            item_str = str(item_str).strip()
-            if not item_str or item_str in _CATCH_ALL_CIDRS:
-                continue
+    # 2. Parse each referenced set's CIDRs once, deduplicated per set.
+    ip_list_map = dict(_iter_ip_lists(rules_data))
+    nets_by_set: dict[str, dict[Any, str]] = {}
+    for set_name in rules_by_set:
+        nets: dict[Any, str] = {}
+        for item in ip_list_map.get(set_name, []):
+            item_str = str(item).strip()
+            if not item_str or item_str in CATCH_ALL_CIDRS:
+                continue  # catch-alls overlap everything; WA163 owns them
             try:
                 net = ipaddress.ip_network(item_str, strict=False)
-                cidrs.append((item_str, net))
             except ValueError:
                 continue
+            nets.setdefault(net, item_str)
+        if nets:
+            nets_by_set[set_name] = nets
 
-        if not cidrs:
+    # 3. Find overlapping set pairs, each with one witness CIDR pair.
+    #    A set trivially overlaps itself (identical CIDRs), so any set
+    #    referenced by two or more rules is a candidate without sweeping.
+    pair_witness: dict[tuple[str, str], tuple[str, str, str, str]] = {}
+    for set_name, nets in nets_by_set.items():
+        if len(rules_by_set[set_name]) >= 2:
+            cidr = next(iter(nets.values()))
+            pair_witness[(set_name, set_name)] = (cidr, set_name, cidr, set_name)
+
+    entries = [
+        (net, set_name, cidr_str)
+        for set_name, nets in nets_by_set.items()
+        for net, cidr_str in nets.items()
+    ]
+    for ip_version in (4, 6):
+        version_entries = [e for e in entries if e[0].version == ip_version]
+        if len(version_entries) < 2:
             continue
+        # Broadest-first: ancestors precede the networks they contain;
+        # every active-stack entry contains the current network.
+        version_entries.sort(key=lambda e: (int(e[0].network_address), e[0].prefixlen))
+        active: list[tuple[Any, str, str]] = []
+        for net, set_name, cidr_str in version_entries:
+            while active and int(active[-1][0].broadcast_address) < int(net.network_address):
+                active.pop()
+            for _p_net, p_set, p_cidr in active:
+                if p_set == set_name:
+                    continue
+                key: tuple[str, str] = tuple(sorted((p_set, set_name)))  # type: ignore[assignment]
+                if key not in pair_witness:
+                    pair_witness[key] = (p_cidr, p_set, cidr_str, set_name)
+            active.append((net, set_name, cidr_str))
 
-        # Sort rules by priority for evaluation order
-        rule_refs_sorted = sorted(rule_refs, key=lambda x: x[1])
+    # 4. Pair rules of overlapping sets; emit once per shadowed rule pair.
+    seen_rule_pairs: set[tuple[str, str]] = set()
+    for (set_a, set_b), witness in pair_witness.items():
+        for rule_a in rules_by_set[set_a]:
+            for rule_b in rules_by_set[set_b]:
+                _emit_cross_rule_overlap(
+                    ctx, rule_a, set_a, rule_b, set_b, witness, seen_rule_pairs
+                )
 
-        # Build a list of (rule_ref, priority, action, cidrs_list) for sweep
-        # For simplicity, we treat each rule as potentially containing all CIDRs
-        # in the referenced IP set. A more precise check would require per-rule
-        # IP set membership, which isn't directly supported in AWS WAF YAML.
 
-        # Use sweep-line to detect overlap across rules
-        seen_pairs: set[tuple[str, str]] = set()
-
-        # Separate by IP version
-        for ip_version in (4, 6):
-            version_cidrs = [
-                (cidr_str, net) for cidr_str, net in cidrs if net.version == ip_version
-            ]
-            if len(version_cidrs) < 2:
-                continue
-
-            # Sort: broadest first
-            sorted_cidrs = sorted(
-                version_cidrs, key=lambda x: (int(x[1].network_address), x[1].prefixlen)
-            )
-
-            active: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-            for cidr_str, net in sorted_cidrs:
-                while active and int(active[-1][1].broadcast_address) < int(net.network_address):
-                    active.pop()
-                if active:
-                    _parent_cidr, _parent_net = active[-1]
-                    # Now find which rules reference which CIDRs — for now, flag as cross-rule issue
-                    # if they reference the same IP set name and have different actions
-                    for ref1, pri1, action1, _rule1 in rule_refs_sorted:
-                        for ref2, pri2, _action2, _rule2 in rule_refs_sorted:
-                            if ref1 >= ref2:  # Avoid duplicate pairs
-                                continue
-                            if action1 in _TERMINATING_ACTIONS and pri1 < pri2:
-                                # rule1 has higher priority and terminal action
-                                pair_key = (ref1, ref2)
-                                if pair_key not in seen_pairs:
-                                    seen_pairs.add(pair_key)
-                                    ctx.add(
-                                        LintResult(
-                                            rule_id="WA167",
-                                            severity=Severity.WARNING,
-                                            message=(
-                                                f"Rules '{ref1}' (priority {pri1}, "
-                                                f"action {action1}) and '{ref2}' "
-                                                f"(priority {pri2}) both reference IP set "
-                                                f"'{ipset_name}' with overlapping CIDR "
-                                                f"entries; {ref2} may be shadowed"
-                                            ),
-                                            phase="",
-                                            ref=ref2,
-                                            suggestion="Reorder rules or split IP sets "
-                                            "to avoid overlap",
-                                        )
-                                    )
-                active.append((cidr_str, net))
+def _emit_cross_rule_overlap(
+    ctx: LintContext,
+    rule_a: tuple[str, int, str],
+    set_a: str,
+    rule_b: tuple[str, int, str],
+    set_b: str,
+    witness: tuple[str, str, str, str],
+    seen_rule_pairs: set[tuple[str, str]],
+) -> None:
+    """Emit WA167 once per shadowing rule pair (helper for set pairing)."""
+    ref_a, pri_a, action_a = rule_a
+    ref_b, pri_b, action_b = rule_b
+    if ref_a == ref_b or pri_a == pri_b:
+        return  # same rule, or no defined evaluation order (WA101 owns dupes)
+    if pri_a < pri_b:
+        hp_ref, hp_pri, hp_action, hp_set = ref_a, pri_a, action_a, set_a
+        lp_ref, lp_pri, lp_set = ref_b, pri_b, set_b
+    else:
+        hp_ref, hp_pri, hp_action, hp_set = ref_b, pri_b, action_b, set_b
+        lp_ref, lp_pri, lp_set = ref_a, pri_a, set_a
+    if hp_action not in _TERMINATING_ACTIONS:
+        return  # higher-priority rule lets traffic continue; nothing is shadowed
+    pair = (hp_ref, lp_ref)
+    if pair in seen_rule_pairs:
+        return
+    seen_rule_pairs.add(pair)
+    cidr_p, set_p, cidr_c, set_c = witness
+    ctx.add(
+        LintResult(
+            rule_id="WA167",
+            severity=Severity.WARNING,
+            message=(
+                f"Rule '{lp_ref}' (priority {lp_pri}, IP set '{lp_set}') is shadowed by"
+                f" rule '{hp_ref}' (priority {hp_pri}, action {hp_action}, IP set '{hp_set}'):"
+                f" CIDR {cidr_p!r} in '{set_p}' contains {cidr_c!r} in '{set_c}'"
+            ),
+            phase="",
+            ref=lp_ref,
+            suggestion="Reorder rules or split IP sets to avoid overlap",
+        )
+    )
 
 
 # Terminating actions — these stop rule evaluation on match.
