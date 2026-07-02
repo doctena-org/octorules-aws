@@ -7,7 +7,13 @@ from contextvars import ContextVar
 from typing import Any
 
 from octorules.linter.engine import LintContext, LintResult, Severity
-from octorules.linter.helpers import CATCH_ALL_CIDRS
+from octorules.linter.helpers import (
+    CATCH_ALL_CIDRS,
+    find_duplicates_by_key,
+    find_overlapping_cidrs,
+    iter_provider_phases,
+    normalize_host_bits,
+)
 from octorules.phases import PHASE_BY_NAME
 from octorules.reserved_ips import is_reserved
 
@@ -68,17 +74,9 @@ def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> 
     AWS WAF requires MetricName to be unique across all rules in a Web ACL,
     not just within a single phase.
     """
-    # Collect (MetricName -> list of (phase, ref)) across all AWS phases
-    seen: dict[str, list[tuple[str, str]]] = {}
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
+    # Collect (MetricName -> list of (phase, ref)) pairs across all AWS phases
+    pairs: list[tuple[str, tuple[str, str]]] = []
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         for rule in rules:
             vc = rule.get("VisibilityConfig")
             if not isinstance(vc, dict):
@@ -87,9 +85,10 @@ def _check_cross_phase_metrics(rules_data: dict[str, Any], ctx: LintContext) -> 
             if not isinstance(metric, str) or not metric:
                 continue
             ref = str(rule.get("ref", ""))
-            seen.setdefault(metric, []).append((phase_name, ref))
+            pairs.append((metric, (phase_name, ref)))
 
-    for metric, locations in sorted(seen.items()):
+    duplicates = find_duplicates_by_key(pairs)
+    for metric, locations in sorted(duplicates.items()):
         # Only flag if the SAME metric appears in more than one phase
         phases = {phase for phase, _ in locations}
         if len(phases) > 1:
@@ -110,39 +109,30 @@ def _check_duplicate_statements(rules_data: dict[str, Any], ctx: LintContext) ->
     If two rules in the same phase have identical Statement dicts (after
     serializing to sorted JSON), warn about potential copy-paste error.
     """
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
-
-        # Collect (serialized_statement -> list of refs)
-        seen: dict[str, list[str]] = {}
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
+        # Collect (serialized_statement -> ref) pairs
+        pairs: list[tuple[str, str]] = []
         for rule in rules:
             stmt = rule.get("Statement")
             if not isinstance(stmt, dict):
                 continue
             ref = str(rule.get("ref", ""))
             key = json.dumps(stmt, sort_keys=True)
-            seen.setdefault(key, []).append(ref)
+            pairs.append((key, ref))
 
-        for _, refs in sorted(seen.items()):
-            if len(refs) > 1:
-                ctx.add(
-                    LintResult(
-                        rule_id="WA520",
-                        severity=Severity.WARNING,
-                        message=(
-                            f"Duplicate Statement in rules: {', '.join(refs)}"
-                            " (possible copy-paste error)"
-                        ),
-                        phase=phase_name,
-                    )
+        duplicates = find_duplicates_by_key(pairs)
+        for _, refs in sorted(duplicates.items()):
+            ctx.add(
+                LintResult(
+                    rule_id="WA520",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Duplicate Statement in rules: {', '.join(refs)}"
+                        " (possible copy-paste error)"
+                    ),
+                    phase=phase_name,
                 )
+            )
 
 
 def _check_wcu_capacity(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -156,16 +146,7 @@ def _check_wcu_capacity(rules_data: dict[str, Any], ctx: LintContext) -> None:
     # Track per-phase totals for the message
     phase_totals: list[tuple[str, int]] = []
 
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
-
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         phase_wcu = 0
         for rule in rules:
             if not isinstance(rule, dict):
@@ -214,16 +195,7 @@ def _check_ipset_references(rules_data: dict[str, Any], ctx: LintContext) -> Non
         return
 
     # Collect all IPSet ARNs from all AWS phases
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
-
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
@@ -279,16 +251,7 @@ def _check_regex_set_references(rules_data: dict[str, Any], ctx: LintContext) ->
         # No regex lists defined -- skip (same logic as WA326 for IP sets)
         return
 
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
-
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
@@ -334,15 +297,7 @@ def _check_rule_count(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """
     total = 0
     first_phase = ""
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         count = sum(1 for r in rules if isinstance(r, dict))
         if count > 0 and not first_phase:
             first_phase = phase_name
@@ -491,41 +446,12 @@ def _check_list_catch_all(rules_data: dict[str, Any], ctx: LintContext) -> None:
 def _check_list_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """WA164: Detect overlapping IP/CIDR entries within a single IP set.
 
-    Uses a sweep-line algorithm (O(n log n)) — ported from CF478 in
-    octorules-cloudflare v0.7.8.  Large IPSets (AWS allows up to 10,000
-    entries per set) need efficient overlap detection to keep lint fast.
+    Uses find_overlapping_cidrs (sweep-line O(n log n) algorithm).
+    Large IPSets (AWS allows up to 10,000 entries per set) need efficient
+    overlap detection to keep lint fast.
     """
-
-    def _sweep(
-        name: str,
-        items: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]],
-    ) -> None:
-        # Sort by network address ascending, then prefix length ascending
-        # (broadest first when addresses are equal).
-        sorted_items = sorted(items, key=lambda x: (int(x[1].network_address), x[1].prefixlen))
-        active: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-        for val, net in sorted_items:
-            while active and int(active[-1][1].broadcast_address) < int(net.network_address):
-                active.pop()
-            if active:
-                parent_val, _parent_net = active[-1]
-                if val != parent_val:
-                    ctx.add(
-                        LintResult(
-                            rule_id="WA164",
-                            severity=Severity.WARNING,
-                            message=(
-                                f"IP set '{name}' has overlapping entries:"
-                                f" {val!r} overlaps with {parent_val!r}"
-                            ),
-                            phase="",
-                        )
-                    )
-            active.append((val, net))
-
     for name, items in _iter_ip_lists(rules_data):
-        v4: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
-        v6: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+        parsed: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
         for item in items:
             item_str = str(item).strip()
             if not item_str or item_str in CATCH_ALL_CIDRS:
@@ -536,9 +462,21 @@ def _check_list_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> N
                 net = ipaddress.ip_network(item_str, strict=False)
             except ValueError:
                 continue  # syntactic errors are WA020's concern
-            (v4 if net.version == 4 else v6).append((item_str, net))
-        _sweep(name, v4)
-        _sweep(name, v6)
+            parsed.append((item_str, net))
+
+        for val, _net, parent_val, _parent_net in find_overlapping_cidrs(parsed):
+            if val != parent_val:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA164",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"IP set '{name}' has overlapping entries:"
+                            f" {val!r} overlaps with {parent_val!r}"
+                        ),
+                        phase="",
+                    )
+                )
 
 
 def _check_ipset_host_bits(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -554,27 +492,20 @@ def _check_ipset_host_bits(rules_data: dict[str, Any], ctx: LintContext) -> None
                 continue
             if "/" not in item_str:
                 continue
-            try:
-                # Try strict mode first
-                ipaddress.ip_network(item_str, strict=True)
-            except ValueError:
-                # Host bits set — try non-strict to get canonical form
-                try:
-                    net = ipaddress.ip_network(item_str, strict=False)
-                    ctx.add(
-                        LintResult(
-                            rule_id="WA166",
-                            severity=Severity.WARNING,
-                            message=(
-                                f"IP set '{name}': CIDR {item_str!r} has host bits set"
-                                f" (did you mean {net!r}?)"
-                            ),
-                            phase="",
-                            suggestion=f"Use {net!r} instead",
-                        )
+            normalized = normalize_host_bits(item_str)
+            if normalized is not None:
+                ctx.add(
+                    LintResult(
+                        rule_id="WA166",
+                        severity=Severity.WARNING,
+                        message=(
+                            f"IP set '{name}': CIDR {item_str!r} has host bits set"
+                            f" (did you mean {normalized!r}?)"
+                        ),
+                        phase="",
+                        suggestion=f"Use {normalized!r} instead",
                     )
-                except ValueError:
-                    continue  # Invalid CIDR — other checks handle that
+                )
 
 
 def _check_cross_rule_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -593,15 +524,7 @@ def _check_cross_rule_ipset_overlap(rules_data: dict[str, Any], ctx: LintContext
     # 1. Which rules reference which IP sets?
     rules_by_set: dict[str, list[tuple[str, int, str]]] = {}
     n_references = 0
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
+    for _phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
@@ -760,16 +683,7 @@ def _check_unreachable_rules(rules_data: dict[str, Any], ctx: LintContext) -> No
     AWS WAF evaluates rules in Priority order and stops at the first
     matching terminating action (Block, Allow, Captcha, Challenge).
     """
-    for phase_name, rules in rules_data.items():
-        if phase_name not in _AWS_PHASE_NAMES:
-            continue
-        if phase_name not in PHASE_BY_NAME:
-            continue
-        if ctx.phase_filter and phase_name not in ctx.phase_filter:
-            continue
-        if not isinstance(rules, list):
-            continue
-
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         # Sort by Priority (rules without valid priority are skipped)
         prioritized: list[tuple[int, dict]] = []
         for rule in rules:
@@ -816,14 +730,15 @@ def _check_unreachable_rules(rules_data: dict[str, Any], ctx: LintContext) -> No
 
 def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
     """Run all AWS WAF lint checks on a zone rules file."""
-    for phase_name, rules in rules_data.items():
+    # Check for non-list phase values
+    for phase_name, rules_val in rules_data.items():
         if phase_name not in _AWS_PHASE_NAMES:
             continue
         if phase_name not in PHASE_BY_NAME:
             continue
         if ctx.phase_filter and phase_name not in ctx.phase_filter:
             continue
-        if not isinstance(rules, list):
+        if not isinstance(rules_val, list):
             ctx.add(
                 LintResult(
                     rule_id="WA024",
@@ -832,8 +747,9 @@ def aws_lint(rules_data: dict[str, Any], ctx: LintContext) -> None:
                     phase=phase_name,
                 )
             )
-            continue
 
+    # Per-phase validation
+    for phase_name, rules in iter_provider_phases(rules_data, ctx, _AWS_PHASE_NAMES):
         results = validate_rules(rules, phase=phase_name)
         for result in results:
             ctx.add(result)

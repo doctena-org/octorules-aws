@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "octorules>=0.29.0",
+    "octorules>=0.30.0",
     "boto3>=1.26,<2.0",
 ]
 

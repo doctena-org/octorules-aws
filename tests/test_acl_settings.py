@@ -273,6 +273,26 @@ class TestValidateAclSettings:
         assert len(errors) == 1
         assert "exactly one key from" in errors[0]
 
+    def test_collects_all_errors_not_just_first(self):
+        """A bad DefaultAction must not short-circuit the remaining checks."""
+        errors = []
+        _validate_acl_settings(
+            {
+                "aws_waf_settings": {
+                    "DefaultAction": "Allow",
+                    "VisibilityConfig": "nope",
+                    "CustomResponseBodies": [],
+                }
+            },
+            "my-acl",
+            errors,
+            [],
+        )
+        assert len(errors) == 3
+        assert any("DefaultAction" in e for e in errors)
+        assert any("VisibilityConfig" in e for e in errors)
+        assert any("CustomResponseBodies" in e for e in errors)
+
     def test_invalid_default_action_multiple_keys(self):
         errors = []
         _validate_acl_settings(

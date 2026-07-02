@@ -5,7 +5,12 @@ import re
 from contextvars import ContextVar
 
 from octorules.linter.engine import LintResult, Severity
-from octorules.linter.helpers import find_duplicate_priorities, find_first_priority_gap
+from octorules.linter.helpers import (
+    find_duplicate_priorities,
+    find_first_priority_gap,
+)
+from octorules.linter.helpers import is_strict_int as _is_strict_int
+from octorules.linter.helpers import lint_result as _result
 
 # Rule IDs emitted by validate_rules() — kept in sync with _rules.py by
 # test_plugin_rule_ids_match_metas.
@@ -95,33 +100,6 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA602",
     }
 )
-
-
-def _result(
-    rule_id: str,
-    severity: Severity,
-    message: str,
-    phase: str,
-    ref: str = "",
-    *,
-    field: str = "",
-    suggestion: str = "",
-) -> LintResult:
-    """Create a LintResult with common defaults."""
-    return LintResult(
-        rule_id=rule_id,
-        severity=severity,
-        message=message,
-        phase=phase,
-        ref=ref,
-        field=field,
-        suggestion=suggestion,
-    )
-
-
-def _is_strict_int(val: object) -> bool:
-    """True if *val* is an int but not a bool."""
-    return isinstance(val, int) and not isinstance(val, bool)
 
 
 _VALID_ACTIONS = frozenset({"Allow", "Block", "Count", "Captcha", "Challenge"})
@@ -2787,7 +2765,7 @@ def _check_byte_match_specifics(
                     # Decode if it looks like base64
                     try:
                         decoded = base64.b64decode(search_str).decode("utf-8", errors="ignore")
-                    except Exception:
+                    except (ValueError, TypeError):
                         decoded = search_str
                     if decoded and any(c.islower() for c in decoded if c.isalpha()):
                         results.append(
@@ -2809,7 +2787,7 @@ def _check_byte_match_specifics(
                 if "UriPath" in ftm:
                     try:
                         decoded = base64.b64decode(search_str).decode("utf-8", errors="ignore")
-                    except Exception:
+                    except (ValueError, TypeError):
                         decoded = search_str
                     if decoded and not decoded.startswith("/"):
                         results.append(

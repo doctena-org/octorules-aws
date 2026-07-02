@@ -1307,6 +1307,19 @@ class TestRuleCount:
         assert "101" in wa601[0].message
         assert "100" in wa601[0].message
 
+    def test_wa601_filtered_out_phases_do_not_count(self):
+        """Filtered-out phases must not count, even when the finding would
+        attribute to a filtered-in phase (the filtered-in phase comes first,
+        so a counting regression can't hide behind result-phase filtering)."""
+        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        rules_a = [self._make_rule(f"a{i}", i, f"ma{i}") for i in range(60)]
+        rules_b = [self._make_rule(f"b{i}", i, f"mb{i}") for i in range(60)]
+        rules_data = {"aws_waf_custom_rules": rules_a, "aws_waf_rate_rules": rules_b}
+        aws_lint(rules_data, ctx)
+        wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
+        # Only the 60 filtered-in rules count — under the limit, no warning.
+        assert len(wa601) == 0
+
     def test_wa601_cross_phase_sum(self):
         """Rules are summed across all AWS phases."""
         ctx = LintContext()

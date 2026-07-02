@@ -167,6 +167,14 @@ def _apply_acl_settings(zp, plans, scope, provider):
     return synced, None
 
 
+def _assert_dict_type(value: object, field_name: str, zone_name: str, errors: list[str]) -> bool:
+    """Check if value is a dict; append error if not. Return True if valid."""
+    if value is not None and not isinstance(value, dict):
+        errors.append(f"  {zone_name}/aws_waf_settings: {field_name} must be a dict")
+        return False
+    return True
+
+
 def _validate_acl_settings(desired, zone_name, errors, lines):
     """Validate aws_waf_settings offline."""
     settings = desired.get("aws_waf_settings")
@@ -175,9 +183,7 @@ def _validate_acl_settings(desired, zone_name, errors, lines):
 
     default_action = settings.get("DefaultAction")
     if default_action is not None:
-        if not isinstance(default_action, dict):
-            errors.append(f"  {zone_name}/aws_waf_settings: DefaultAction must be a dict")
-        else:
+        if _assert_dict_type(default_action, "DefaultAction", zone_name, errors):
             keys = set(default_action.keys())
             if len(keys) != 1 or not keys & _VALID_DEFAULT_ACTIONS:
                 errors.append(
@@ -185,14 +191,10 @@ def _validate_acl_settings(desired, zone_name, errors, lines):
                     f" exactly one key from {sorted(_VALID_DEFAULT_ACTIONS)}"
                 )
 
-    vis = settings.get("VisibilityConfig")
-    if vis is not None and not isinstance(vis, dict):
-        errors.append(f"  {zone_name}/aws_waf_settings: VisibilityConfig must be a dict")
+    _assert_dict_type(settings.get("VisibilityConfig"), "VisibilityConfig", zone_name, errors)
 
     for config_name in ("ChallengeConfig", "CaptchaConfig"):
-        config = settings.get(config_name)
-        if config is not None and not isinstance(config, dict):
-            errors.append(f"  {zone_name}/aws_waf_settings: {config_name} must be a dict")
+        _assert_dict_type(settings.get(config_name), config_name, zone_name, errors)
 
     token_domains = settings.get("TokenDomains")
     if token_domains is not None:
@@ -227,6 +229,20 @@ def _dump_acl_settings(scope, provider, out_dir):
 
 
 # ---------------------------------------------------------------------------
+# Format extension helpers
+# ---------------------------------------------------------------------------
+def _iter_valid_changes(plans: list):
+    """Yield (plan, change) tuples for non-empty changes across valid plans."""
+    for plan in plans:
+        if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
+            continue
+        for change in plan.changes:
+            if not change.has_changes:
+                continue
+            yield plan, change
+
+
+# ---------------------------------------------------------------------------
 # Format extension
 # ---------------------------------------------------------------------------
 class AclSettingsFormatter:
@@ -234,16 +250,11 @@ class AclSettingsFormatter:
 
     def format_plan(self, plans: list, zone_name: str) -> list[str]:
         lines: list[str] = []
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
-            for change in plan.changes:
-                if not change.has_changes:
-                    continue
-                lines.append(
-                    f"  {zone_name}/acl_settings.{change.field}:"
-                    f" {change.current!r} -> {change.desired!r}"
-                )
+        for _, change in _iter_valid_changes(plans):
+            lines.append(
+                f"  {zone_name}/acl_settings.{change.field}:"
+                f" {change.current!r} -> {change.desired!r}"
+            )
         return lines
 
     def count_changes(self, plans: list) -> int:
@@ -258,35 +269,25 @@ class AclSettingsFormatter:
 
         p = Pen(use_color)
         lines: list[str] = []
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
-            for change in plan.changes:
-                if not change.has_changes:
-                    continue
-                label = f"acl_settings.{change.field}"
-                line = f"  ~ {label}: {change.current!r} -> {change.desired!r}"
-                lines.append(p.warning(line))
+        for _, change in _iter_valid_changes(plans):
+            label = f"acl_settings.{change.field}"
+            line = f"  ~ {label}: {change.current!r} -> {change.desired!r}"
+            lines.append(p.warning(line))
         return lines
 
     def format_json(self, plans: list) -> list[dict]:
         result: list[dict] = []
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
-            changes = []
-            for change in plan.changes:
-                if not change.has_changes:
-                    continue
-                changes.append(
-                    {
-                        "field": change.field,
-                        "current": change.current,
-                        "desired": change.desired,
-                    }
-                )
-            if changes:
-                result.append({"changes": changes})
+        changes: list[dict] = []
+        for _, change in _iter_valid_changes(plans):
+            changes.append(
+                {
+                    "field": change.field,
+                    "current": change.current,
+                    "desired": change.desired,
+                }
+            )
+        if changes:
+            result.append({"changes": changes})
         return result
 
     def format_markdown(
@@ -295,16 +296,11 @@ class AclSettingsFormatter:
         from octorules.formatter import _md_escape
 
         lines: list[str] = []
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
-            for change in plan.changes:
-                if not change.has_changes:
-                    continue
-                label = _md_escape(f"acl_settings.{change.field}")
-                cur = _md_escape(repr(change.current))
-                des = _md_escape(repr(change.desired))
-                lines.append(f"| ~ | {label} | | {cur} -> {des} |")
+        for _, change in _iter_valid_changes(plans):
+            label = _md_escape(f"acl_settings.{change.field}")
+            cur = _md_escape(repr(change.current))
+            des = _md_escape(repr(change.desired))
+            lines.append(f"| ~ | {label} | | {cur} -> {des} |")
         return lines
 
     def format_html(self, plans: list, lines: list[str]) -> tuple[int, int, int, int]:
@@ -313,15 +309,10 @@ class AclSettingsFormatter:
         from octorules.formatter import _HTML_TABLE_HEADER, _html_summary_row
 
         total_modifies = 0
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
+        if any(_iter_valid_changes(plans)):
             lines.extend(_HTML_TABLE_HEADER)
-            plan_modifies = 0
-            for change in plan.changes:
-                if not change.has_changes:
-                    continue
-                plan_modifies += 1
+            for _, change in _iter_valid_changes(plans):
+                total_modifies += 1
                 label = html_escape(f"acl_settings.{change.field}")
                 cur = html_escape(repr(change.current))
                 des = html_escape(repr(change.desired))
@@ -330,17 +321,12 @@ class AclSettingsFormatter:
                 lines.append(f"    <td>{label}</td>")
                 lines.append(f"    <td>{cur} &rarr; {des}</td>")
                 lines.append("  </tr>")
-            lines.extend(_html_summary_row(0, 0, plan_modifies, 0))
+            lines.extend(_html_summary_row(0, 0, total_modifies, 0))
             lines.append("</table>")
-            total_modifies += plan_modifies
         return 0, 0, total_modifies, 0
 
     def format_report(self, plans: list, zone_has_drift: bool, phases_data: list[dict]) -> bool:
-        total_modifies = 0
-        for plan in plans:
-            if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-                continue
-            total_modifies += sum(1 for c in plan.changes if c.has_changes)
+        total_modifies = sum(1 for _ in _iter_valid_changes(plans))
         if total_modifies:
             zone_has_drift = True
             phases_data.append(
