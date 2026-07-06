@@ -69,7 +69,10 @@ Safety thresholds are configured under `safety:` (framework-owned, not forwarded
 
 The [`examples/`](examples/) directory contains a working single-provider
 `config.yaml` plus `rules/my-web-acl.yaml` demonstrating every supported
-phase and key. Copy it as a starting point.
+phase and key using the nested `aws:` format. Copy it as a starting point.
+
+Zone files can nest all AWS WAF sections under a single `aws:` block; the flat
+spelling (e.g., `aws_waf_custom_rules:` at the top level) is deprecated.
 
 ## Supported features
 
@@ -107,21 +110,22 @@ lifecycle: create, update rules, and delete.
 
 ```yaml
 # rules/my-web-acl.yaml
-custom_rulesets:
-  - id: abcd1234-5678-9012-3456-789012345678
-    name: My Rule Group
-    phase: aws_waf_custom
-    rules:
-      - ref: block-bad-ips
-        Action:
-          Block: {}
-        Statement:
-          IPSetReferenceStatement:
-            ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/blocked/efgh5678
-        VisibilityConfig:
-          SampledRequestsEnabled: true
-          CloudWatchMetricsEnabled: true
-          MetricName: BlockBadIPs
+aws:
+  custom_rulesets:
+    - id: abcd1234-5678-9012-3456-789012345678
+      name: My Rule Group
+      phase: aws_waf_custom
+      rules:
+        - ref: block-bad-ips
+          Action:
+            Block: {}
+          Statement:
+            IPSetReferenceStatement:
+              ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/blocked/efgh5678
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockBadIPs
 ```
 
 ### Creating a new Rule Group
@@ -129,28 +133,29 @@ custom_rulesets:
 Omit the `id` field and add `capacity` to create a new Rule Group:
 
 ```yaml
-custom_rulesets:
-  - name: Block Bad Actors
-    capacity: 100
-    phase: aws_waf_custom
-    rules:
-      - ref: block-scanner
-        Action:
-          Block: {}
-        Statement:
-          ByteMatchStatement:
-            SearchString: "BadBot"
-            FieldToMatch:
-              SingleHeader:
-                Name: user-agent
-            PositionalConstraint: CONTAINS
-            TextTransformations:
-              - Priority: 0
-                Type: LOWERCASE
-        VisibilityConfig:
-          SampledRequestsEnabled: true
-          CloudWatchMetricsEnabled: true
-          MetricName: BlockScanner
+aws:
+  custom_rulesets:
+    - name: Block Bad Actors
+      capacity: 100
+      phase: aws_waf_custom
+      rules:
+        - ref: block-scanner
+          Action:
+            Block: {}
+          Statement:
+            ByteMatchStatement:
+              SearchString: "BadBot"
+              FieldToMatch:
+                SingleHeader:
+                  Name: user-agent
+              PositionalConstraint: CONTAINS
+              TextTransformations:
+                - Priority: 0
+                  Type: LOWERCASE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockScanner
 ```
 
 `capacity` is an AWS WAF concept — an immutable budget (1-5000) that limits rule
@@ -167,24 +172,25 @@ more capacity, delete and recreate the Rule Group with a higher value.
 
 ## Lists (IP Sets & Regex Pattern Sets)
 
-AWS WAF IP Sets and Regex Pattern Sets map to octorules lists. Add a `lists` section to your rules file:
+AWS WAF IP Sets and Regex Pattern Sets map to octorules lists. Add a `lists` section under `aws:`:
 
 ```yaml
 # rules/my-web-acl.yaml
-lists:
-  - name: blocked-ips
-    kind: ip
-    description: "Known bad IPs"
-    items:
-      - ip: "1.2.3.4/32"
-      - ip: "10.0.0.0/8"
+aws:
+  lists:
+    - name: blocked-ips
+      kind: ip
+      description: "Known bad IPs"
+      items:
+        - ip: "1.2.3.4/32"
+        - ip: "10.0.0.0/8"
 
-  - name: bad-ua-patterns
-    kind: regex
-    description: "Bad user-agent patterns"
-    items:
-      - pattern: "BadBot.*"
-      - pattern: "EvilCrawler/\\d+"
+    - name: bad-ua-patterns
+      kind: regex
+      description: "Bad user-agent patterns"
+      items:
+        - pattern: "BadBot.*"
+        - pattern: "EvilCrawler/\\d+"
 ```
 
 IP lists (`kind: ip`) map to AWS WAF IP Sets. Regex lists (`kind: regex`) map to AWS WAF Regex Pattern Sets and are referenced via `RegexPatternSetReferenceStatement`.

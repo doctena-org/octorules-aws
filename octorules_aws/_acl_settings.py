@@ -7,10 +7,14 @@ These are non-phase YAML sections handled via extension hooks:
 Uses plan_zone_hook (prefetch + finalize), apply_extension, format_extension,
 validate_extension, and dump_extension -- same pattern as Azure's policy
 settings in ``octorules_azure/_policy_settings.py``.
+
+The Change and Plan classes inherit from octorules.extensions for API
+compatibility with the shared settings framework (v0.31.0+).
 """
 
 import logging
-from dataclasses import dataclass, field
+
+from octorules.extensions import SettingsChange, SettingsFormatter, SettingsPlan
 
 log = logging.getLogger(__name__)
 
@@ -32,34 +36,18 @@ _VALID_DEFAULT_ACTIONS = frozenset({"Allow", "Block"})
 
 
 # ---------------------------------------------------------------------------
-# Data model for ACL settings diffs
+# Data model for ACL settings diffs (subclass core framework for isinstance gating)
 # ---------------------------------------------------------------------------
-@dataclass
-class AclSettingsChange:
-    """A single field change in ACL settings."""
+class AclSettingsChange(SettingsChange):
+    """A single field change in ACL settings (concrete subclass for AWS WAF)."""
 
-    field: str
-    current: object
-    desired: object
-
-    @property
-    def has_changes(self) -> bool:
-        return self.current != self.desired
+    pass
 
 
-@dataclass
-class AclSettingsPlan:
-    """Plan for all ACL settings changes in a zone."""
+class AclSettingsPlan(SettingsPlan):
+    """Plan for all ACL settings changes in a zone (concrete subclass for AWS WAF)."""
 
-    changes: list[AclSettingsChange] = field(default_factory=list)
-
-    @property
-    def has_changes(self) -> bool:
-        return any(c.has_changes for c in self.changes)
-
-    @property
-    def total_changes(self) -> int:
-        return sum(1 for c in self.changes if c.has_changes)
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -229,119 +217,51 @@ def _dump_acl_settings(scope, provider, out_dir):
 
 
 # ---------------------------------------------------------------------------
-# Format extension helpers
+# Format extension (inherits from core SettingsFormatter)
 # ---------------------------------------------------------------------------
-def _iter_valid_changes(plans: list):
-    """Yield (plan, change) tuples for non-empty changes across valid plans."""
-    for plan in plans:
-        if not isinstance(plan, AclSettingsPlan) or not plan.has_changes:
-            continue
-        for change in plan.changes:
-            if not change.has_changes:
-                continue
-            yield plan, change
+class AclSettingsFormatter(SettingsFormatter):
+    """Formats ACL settings diffs for plan output.
 
+    Inherits standard format methods (format_text, format_json, format_markdown,
+    format_html, format_report) from octorules.extensions.SettingsFormatter,
+    parameterized with AWS WAF-specific prefix and provider identifiers.
+    """
 
-# ---------------------------------------------------------------------------
-# Format extension
-# ---------------------------------------------------------------------------
-class AclSettingsFormatter:
-    """Formats ACL settings diffs for plan output."""
+    def __init__(self) -> None:
+        """Initialize with AWS WAF settings parameters.
+
+        - plan_type: AclSettingsPlan (for isinstance checks)
+        - prefix: "acl_settings" (YAML label prefix)
+        - phase: "acl_settings" (report phase name)
+        - provider_id: "aws_waf_settings" (report provider identifier)
+        """
+        super().__init__(
+            plan_type=AclSettingsPlan,
+            prefix="acl_settings",
+            phase="acl_settings",
+            provider_id="aws_waf_settings",
+        )
 
     def format_plan(self, plans: list, zone_name: str) -> list[str]:
+        """Format changes for plan output (AWS WAF-specific method)."""
         lines: list[str] = []
-        for _, change in _iter_valid_changes(plans):
-            lines.append(
-                f"  {zone_name}/acl_settings.{change.field}:"
-                f" {change.current!r} -> {change.desired!r}"
-            )
+        for plan in self._active_plans(plans):
+            for change in plan.changes:
+                if not change.has_changes:
+                    continue
+                lines.append(
+                    f"  {zone_name}/acl_settings.{change.field}:"
+                    f" {change.current!r} -> {change.desired!r}"
+                )
         return lines
 
     def count_changes(self, plans: list) -> int:
+        """Count total changes across all plans (AWS WAF-specific method)."""
         count = 0
         for plan in plans:
             if isinstance(plan, AclSettingsPlan):
                 count += sum(1 for c in plan.changes if c.has_changes)
         return count
-
-    def format_text(self, plans: list, use_color: bool) -> list[str]:
-        from octorules._color import Pen
-
-        p = Pen(use_color)
-        lines: list[str] = []
-        for _, change in _iter_valid_changes(plans):
-            label = f"acl_settings.{change.field}"
-            line = f"  ~ {label}: {change.current!r} -> {change.desired!r}"
-            lines.append(p.warning(line))
-        return lines
-
-    def format_json(self, plans: list) -> list[dict]:
-        result: list[dict] = []
-        changes: list[dict] = []
-        for _, change in _iter_valid_changes(plans):
-            changes.append(
-                {
-                    "field": change.field,
-                    "current": change.current,
-                    "desired": change.desired,
-                }
-            )
-        if changes:
-            result.append({"changes": changes})
-        return result
-
-    def format_markdown(
-        self, plans: list, pending_diffs: list[list[tuple[str, object, object]]]
-    ) -> list[str]:
-        from octorules.formatter import _md_escape
-
-        lines: list[str] = []
-        for _, change in _iter_valid_changes(plans):
-            label = _md_escape(f"acl_settings.{change.field}")
-            cur = _md_escape(repr(change.current))
-            des = _md_escape(repr(change.desired))
-            lines.append(f"| ~ | {label} | | {cur} -> {des} |")
-        return lines
-
-    def format_html(self, plans: list, lines: list[str]) -> tuple[int, int, int, int]:
-        from html import escape as html_escape
-
-        from octorules.formatter import _HTML_TABLE_HEADER, _html_summary_row
-
-        total_modifies = 0
-        if any(_iter_valid_changes(plans)):
-            lines.extend(_HTML_TABLE_HEADER)
-            for _, change in _iter_valid_changes(plans):
-                total_modifies += 1
-                label = html_escape(f"acl_settings.{change.field}")
-                cur = html_escape(repr(change.current))
-                des = html_escape(repr(change.desired))
-                lines.append("  <tr>")
-                lines.append("    <td>Modify</td>")
-                lines.append(f"    <td>{label}</td>")
-                lines.append(f"    <td>{cur} &rarr; {des}</td>")
-                lines.append("  </tr>")
-            lines.extend(_html_summary_row(0, 0, total_modifies, 0))
-            lines.append("</table>")
-        return 0, 0, total_modifies, 0
-
-    def format_report(self, plans: list, zone_has_drift: bool, phases_data: list[dict]) -> bool:
-        total_modifies = sum(1 for _ in _iter_valid_changes(plans))
-        if total_modifies:
-            zone_has_drift = True
-            phases_data.append(
-                {
-                    "phase": "acl_settings",
-                    "provider_id": "aws_waf_settings",
-                    "status": "drifted",
-                    "yaml_rules": 0,
-                    "live_rules": 0,
-                    "adds": 0,
-                    "removes": 0,
-                    "modifies": total_modifies,
-                }
-            )
-        return zone_has_drift
 
 
 # ---------------------------------------------------------------------------

@@ -170,6 +170,7 @@ class AwsWafProvider:
     for BaseProvider compatibility but not used for auth.
     """
 
+    NAMESPACE = "aws"
     SUPPORTS = frozenset({"custom_rulesets", "lists", "zone_discovery"})
 
     def __init__(
