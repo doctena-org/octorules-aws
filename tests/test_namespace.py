@@ -1,6 +1,5 @@
 """Tests for AWS WAF namespace registration and zone file normalization."""
 
-import pytest
 from octorules.config import normalize_zone_format
 from octorules.phases import PROVIDER_NAMESPACES
 
@@ -171,9 +170,7 @@ def test_custom_rulesets_in_nested_format() -> None:
                                     "FieldToMatch": {"SingleHeader": {"Name": "user-agent"}},
                                     "PositionalConstraint": "CONTAINS",
                                     "SearchString": "bot",
-                                    "TextTransformations": [
-                                        {"Priority": 0, "Type": "LOWERCASE"}
-                                    ],
+                                    "TextTransformations": [{"Priority": 0, "Type": "LOWERCASE"}],
                                 }
                             },
                             "VisibilityConfig": {

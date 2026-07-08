@@ -1680,3 +1680,72 @@ class TestCrossRuleIPSetOverlap:
         aws_lint(rules_data, ctx)
         # 0.0.0.0/0 overlaps everything; WA163 owns catch-alls.
         assert not [r for r in ctx.results if r.rule_id == "WA167"]
+
+
+class TestListItemsDictShape:
+    """The documented `- ip:` mapping item shape drives the WA list rules.
+
+    Bare-string items are only a defensive fallback; core's validators
+    reject them, so the mapping shape is the one real files use.
+    """
+
+    def test_wa162_fires_on_mapping_items(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "bad-set", "kind": "ip", "items": [{"ip": "10.0.0.0/8"}]}],
+        }
+        aws_lint(rules_data, ctx)
+        wa162 = [r for r in ctx.results if r.rule_id == "WA162"]
+        assert len(wa162) == 1
+        assert "10.0.0.0/8" in wa162[0].message
+
+    def test_wa163_fires_on_mapping_items(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "wide", "kind": "ip", "items": [{"ip": "0.0.0.0/0"}]}],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA163"]
+
+    def test_wa164_fires_on_mapping_items(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "overlapping",
+                    "kind": "ip",
+                    "items": [{"ip": "5.5.5.0/24"}, {"ip": "5.5.5.128/25"}],
+                }
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        wa164 = [r for r in ctx.results if r.rule_id == "WA164"]
+        assert wa164
+        assert "5.5.5.128/25" in wa164[0].message
+
+    def test_wa158_counts_unique_mapping_items(self):
+        from octorules_aws.linter._plugin import _MAX_IPSET_ITEMS
+
+        items = [
+            {"ip": f"10.{(i >> 16) & 255}.{(i >> 8) & 255}.{i & 255}/32"}
+            for i in range(_MAX_IPSET_ITEMS + 1)
+        ]
+        ctx = LintContext()
+        aws_lint({"lists": [{"name": "huge", "kind": "ip", "items": items}]}, ctx)
+        wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
+        assert len(wa158) == 1
+        assert str(_MAX_IPSET_ITEMS + 1) in wa158[0].message
+
+    def test_clean_mapping_items_no_findings(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [
+                {
+                    "name": "clean",
+                    "kind": "ip",
+                    "items": [{"ip": "8.8.8.0/24"}, {"ip": "1.2.3.0/24"}],
+                }
+            ],
+        }
+        aws_lint(rules_data, ctx)
+        assert not [r for r in ctx.results if r.rule_id in ("WA158", "WA162", "WA163", "WA164")]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "octorules-aws"
-version = "0.10.0"
+version = "0.11.0"
 description = "AWS WAF provider for octorules"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -48,6 +48,7 @@ Issues = "https://github.com/doctena-org/octorules-aws/issues"
 aws = "octorules_aws:AwsWafProvider"
 
 [tool.setuptools.packages.find]
+include = ["octorules_aws*"]
 
 [tool.ruff]
 target-version = "py310"

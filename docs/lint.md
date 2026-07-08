@@ -11,28 +11,30 @@ These rules are registered automatically when `octorules-aws` is installed. They
 Add a `# octorules:disable=RULE` comment immediately before a rule to suppress a specific finding. Multiple rule IDs can be comma-separated.
 
 ```yaml
-aws_waf_custom_rules:
-  # octorules:disable=WA001
-  - Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: ["CN", "RU"]
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockGeo
+aws:
+  waf_custom_rules:
+    # octorules:disable=WA001
+    - Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: ["CN", "RU"]
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockGeo
 ```
 
 **Multiple rules:**
 
 ```yaml
-  # octorules:disable=WA020,WA313
-  - ref: legacy-rule
-    Priority: 10
-    CustomField: something
-    ...
+aws:
+  waf_custom_rules:
+    # octorules:disable=WA020,WA313
+    - ref: legacy-rule
+      Priority: 10
+      CustomField: something
 ```
 
 Suppressed findings are excluded from the report but counted in the summary line (e.g., `Total: 0 error(s), 0 warning(s), 0 info (1 suppressed)`).
@@ -175,25 +177,27 @@ Every rule must have a `ref` field that serves as the rule's unique identifier (
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: ["CN"]
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockChina
+aws:
+  waf_custom_rules:
+    - Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: ["CN"]
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockChina
 ```
 
 **Fix:** Add a `ref` field:
 
 ```yaml
-  - ref: block-china
-    Priority: 10
-    ...
+aws:
+  waf_custom_rules:
+    - ref: block-china
+      Priority: 10
 ```
 
 ### WA010 -- Invalid ref format
@@ -205,15 +209,19 @@ The `ref` value must be 1-128 characters and contain only alphanumeric character
 **Triggers on:**
 
 ```yaml
-  - ref: "my rule with spaces!"
-    ...
+aws:
+  waf_custom_rules:
+    - ref: "my rule with spaces!"
+      Priority: 10
 ```
 
 **Fix:** Use only allowed characters:
 
 ```yaml
-  - ref: my-rule-with-spaces
-    ...
+aws:
+  waf_custom_rules:
+    - ref: my-rule-with-spaces
+      Priority: 10
 ```
 
 ### WA002 -- Rule missing 'Priority'
@@ -240,9 +248,10 @@ Every rule must have a `Priority` field. AWS WAF uses priority to determine rule
 **Fix:** Add a `Priority` field:
 
 ```yaml
-  - ref: block-bad-ips
-    Priority: 10
-    ...
+aws:
+  waf_custom_rules:
+    - ref: block-bad-ips
+      Priority: 10
 ```
 
 ### WA003 -- Rule missing 'VisibilityConfig'
@@ -327,15 +336,16 @@ A rule must have either `Action` or `OverrideAction`, not both. `Action` is for 
 **Fix:** Remove one. For managed rule groups, use `OverrideAction`:
 
 ```yaml
-  - ref: aws-common-rules
-    Priority: 10
-    OverrideAction:
-      Count: {}
-    Statement:
-      ManagedRuleGroupStatement:
-        VendorName: AWS
-        Name: AWSManagedRulesCommonRuleSet
-    ...
+aws:
+  waf_managed_rules:
+    - ref: aws-common-rules
+      Priority: 10
+      OverrideAction:
+        Count: {}
+      Statement:
+        ManagedRuleGroupStatement:
+          VendorName: AWS
+          Name: AWSManagedRulesCommonRuleSet
 ```
 
 ### WA020 -- Unknown top-level rule field
@@ -399,13 +409,12 @@ Two rules in the same phase must not share the same `ref` value. The `ref` maps 
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: block-china
-    Priority: 10
-    ...
-  - ref: block-china      # duplicate
-    Priority: 20
-    ...
+aws:
+  waf_custom_rules:
+    - ref: block-china
+      Priority: 10
+    - ref: block-china      # duplicate
+      Priority: 20
 ```
 
 **Fix:** Give each rule a unique `ref`.
@@ -419,9 +428,10 @@ A rule entry in a phase list is not a dict (e.g., a bare string or number). Each
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - not-a-dict
-  - 42
+aws:
+  waf_custom_rules:
+    - not-a-dict
+    - 42
 ```
 
 **Fix:** Replace the entry with a valid rule mapping.
@@ -435,7 +445,8 @@ A phase key has a non-list value (e.g., a string or dict instead of a YAML seque
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules: "not a list"
+aws:
+  waf_custom_rules:
 ```
 
 **Fix:** Replace the value with a YAML list of rules.
@@ -494,9 +505,10 @@ The `Priority` field must be a non-negative integer (0 or greater). Strings, flo
 **Triggers on:**
 
 ```yaml
-  - ref: bad-priority
-    Priority: "high"
-    ...
+aws:
+  waf_custom_rules:
+    - ref: bad-priority
+      Priority: "high"
 ```
 
 **Fix:** Use a non-negative integer:
@@ -514,24 +526,23 @@ Two or more rules within the same phase share the same `Priority` value. AWS WAF
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: rule-a
-    Priority: 10
-    ...
-  - ref: rule-b
-    Priority: 10     # same as rule-a
-    ...
+aws:
+  waf_custom_rules:
+    - ref: rule-a
+      Priority: 10
+    - ref: rule-b
+      Priority: 10     # same as rule-a
 ```
 
 **Fix:** Assign distinct priority values:
 
 ```yaml
-  - ref: rule-a
-    Priority: 10
-    ...
-  - ref: rule-b
-    Priority: 20
-    ...
+aws:
+  waf_custom_rules:
+    - ref: rule-a
+      Priority: 10
+    - ref: rule-b
+      Priority: 20
 ```
 
 ### WA102 -- Non-contiguous rule priorities
@@ -1164,23 +1175,24 @@ Triggers when an `AndStatement` or `OrStatement` contains a `Statements` item th
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: bad-compound
-    Priority: 1
-    Action:
-      Block: {}
-    Statement:
-      AndStatement:
-        Statements:
-          - ByteMatchStatement:
-              SearchString: "test"
-              FieldToMatch:
-                QueryString: {}
-              PositionalConstraint: CONTAINS
-              TextTransformations:
-                - Priority: 0
-                  Type: NONE
-          - "not a statement"       # triggers WA322
+aws:
+  waf_custom_rules:
+    - ref: bad-compound
+      Priority: 1
+      Action:
+        Block: {}
+      Statement:
+        AndStatement:
+          Statements:
+            - ByteMatchStatement:
+                SearchString: "test"
+                FieldToMatch:
+                  QueryString: {}
+                PositionalConstraint: CONTAINS
+                TextTransformations:
+                  - Priority: 0
+                    Type: NONE
+            - "not a statement"       # triggers WA322
 ```
 
 **Fix:** Ensure every item in `Statements` is a dict containing exactly one statement type key.
@@ -1253,20 +1265,21 @@ Triggers when a `ByteMatchStatement` has an empty `SearchString`. An empty searc
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: empty-search
-    Priority: 1
-    Action:
-      Block: {}
-    Statement:
-      ByteMatchStatement:
-        SearchString: ""         # empty — matches nothing
-        FieldToMatch:
-          QueryString: {}
-        PositionalConstraint: CONTAINS
-        TextTransformations:
-          - Priority: 0
-            Type: NONE
+aws:
+  waf_custom_rules:
+    - ref: empty-search
+      Priority: 1
+      Action:
+        Block: {}
+      Statement:
+        ByteMatchStatement:
+          SearchString: ""         # empty — matches nothing
+          FieldToMatch:
+            QueryString: {}
+          PositionalConstraint: CONTAINS
+          TextTransformations:
+            - Priority: 0
+              Type: NONE
 ```
 
 **Fix:** Provide a non-empty `SearchString` value.
@@ -1776,21 +1789,20 @@ Two or more rules within the same phase have the same `MetricName` in their `Vis
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: rule-a
-    Priority: 10
-    ...
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockBadTraffic
-  - ref: rule-b
-    Priority: 20
-    ...
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockBadTraffic    # same as rule-a
+aws:
+  waf_custom_rules:
+    - ref: rule-a
+      Priority: 10
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockBadTraffic
+    - ref: rule-b
+      Priority: 20
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockBadTraffic    # same as rule-a
 ```
 
 **Fix:** Give each rule a unique `MetricName`.
@@ -1804,23 +1816,22 @@ The same `MetricName` appears in rules across different AWS phases. AWS WAF requ
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: custom-block
-    Priority: 10
-    ...
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockTraffic
+aws:
+  waf_custom_rules:
+    - ref: custom-block
+      Priority: 10
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockTraffic
 
-aws_waf_rate_rules:
-  - ref: rate-limit
-    Priority: 10
-    ...
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockTraffic       # same metric, different phase
+  waf_rate_rules:
+    - ref: rate-limit
+      Priority: 10
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockTraffic       # same metric, different phase
 ```
 
 **Fix:** Use distinct `MetricName` values across all phases:
@@ -1839,23 +1850,22 @@ Two or more rules in the same phase have identical `Statement` dicts (after norm
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: block-china
-    Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: ["CN"]
-    ...
-  - ref: count-china
-    Priority: 20
-    Action:
-      Count: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: ["CN"]      # identical statement
-    ...
+aws:
+  waf_custom_rules:
+    - ref: block-china
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: ["CN"]
+    - ref: count-china
+      Priority: 20
+      Action:
+        Count: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: ["CN"]      # identical statement
 ```
 
 **Fix:** Verify this is intentional. If not, update one of the statements to match its intended condition.
@@ -1871,34 +1881,36 @@ The name is extracted from the ARN: `arn:aws:wafv2:REGION:ACCOUNT:SCOPE/ipset/NA
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: allowed-ips
-    kind: ip
-    items: [...]
+aws:
+  lists:
+    - name: allowed-ips
+      kind: ip
+      items: [...]
 
-aws_waf_custom_rules:
-  - ref: block-bad-ips
-    Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      IPSetReferenceStatement:
-        ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/bad-ips/abc123
-        # "bad-ips" is not in the lists section
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockBadIPs
+  waf_custom_rules:
+    - ref: block-bad-ips
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        IPSetReferenceStatement:
+          ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/bad-ips/abc123
+          # "bad-ips" is not in the lists section
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockBadIPs
 ```
 
 **Fix:** Add the IP Set to the `lists` section:
 
 ```yaml
-lists:
-  - name: bad-ips
-    kind: ip
-    items:
-      - ip: "1.2.3.4/32"
+aws:
+  lists:
+    - name: bad-ips
+      kind: ip
+      items:
+        - ip: "1.2.3.4/32"
 ```
 
 > **Note:** This check only fires when a `lists` section exists with at least one entry. If you don't use octorules-managed IP Sets, this rule won't fire.
@@ -1914,41 +1926,43 @@ The name is extracted from the ARN: `arn:aws:wafv2:REGION:ACCOUNT:SCOPE/regexpat
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: allowed-patterns
-    kind: regex
-    items: [...]
+aws:
+  lists:
+    - name: allowed-patterns
+      kind: regex
+      items: [...]
 
-aws_waf_custom_rules:
-  - ref: block-bad-ua
-    Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      RegexPatternSetReferenceStatement:
-        ARN: arn:aws:wafv2:us-east-1:123456789012:regional/regexpatternset/bad-ua-patterns/abc123
-        # "bad-ua-patterns" is not in the lists section
-        FieldToMatch:
-          SingleHeader:
-            Name: user-agent
-        TextTransformations:
-          - Priority: 0
-            Type: NONE
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: BlockBadUA
+  waf_custom_rules:
+    - ref: block-bad-ua
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        RegexPatternSetReferenceStatement:
+          ARN: arn:aws:wafv2:us-east-1:123456789012:regional/regexpatternset/bad-ua-patterns/abc123
+          # "bad-ua-patterns" is not in the lists section
+          FieldToMatch:
+            SingleHeader:
+              Name: user-agent
+          TextTransformations:
+            - Priority: 0
+              Type: NONE
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: BlockBadUA
 ```
 
 **Fix:** Add the Regex Pattern Set to the `lists` section:
 
 ```yaml
-lists:
-  - name: bad-ua-patterns
-    kind: regex
-    items:
-      - pattern: "BadBot.*"
-      - pattern: "EvilCrawler/\\d+"
+aws:
+  lists:
+    - name: bad-ua-patterns
+      kind: regex
+      items:
+        - pattern: "BadBot.*"
+        - pattern: "EvilCrawler/\\d+"
 ```
 
 > **Note:** This check only fires when a `lists` section exists with at least one `kind: regex` entry. If you don't use octorules-managed Regex Pattern Sets, this rule won't fire.
@@ -1970,12 +1984,13 @@ Triggers when an IP set in the `lists` section contains addresses from reserved 
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: blocked_ips
-    kind: ip
-    items:
-      - 10.0.0.0/8          # RFC 1918 private
-      - 127.0.0.1            # loopback
+aws:
+  lists:
+    - name: blocked_ips
+      kind: ip
+      items:
+        - ip: 10.0.0.0/8      # RFC 1918 private
+        - ip: 127.0.0.1       # loopback
 ```
 
 **Fix:** Use public IP addresses, or suppress the warning if intentionally blocking private ranges.
@@ -1989,12 +2004,13 @@ Triggers when an IP set contains `0.0.0.0/0` or `::/0`. Those CIDRs match every 
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: blocklist
-    kind: ip
-    items:
-      - 0.0.0.0/0           # <-- blocks everything
-      - 192.168.1.0/24
+aws:
+  lists:
+    - name: blocklist
+      kind: ip
+      items:
+        - ip: 0.0.0.0/0       # <-- blocks everything
+        - ip: 192.168.1.0/24
 ```
 
 **Fix:** Replace the catch-all entry with specific CIDRs, or remove it if the intent is to deny all traffic reaching the IPSetReferenceStatement (in which case the statement itself is superfluous — drop the rule).
@@ -2010,12 +2026,13 @@ Uses a sweep-line algorithm (O(n log n)) so 1,000-entry IP sets lint in well und
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: blocked_ips
-    kind: ip
-    items:
-      - 10.0.0.0/8          # broader
-      - 10.1.0.0/16         # <-- redundant, already covered by 10.0.0.0/8
+aws:
+  lists:
+    - name: blocked_ips
+      kind: ip
+      items:
+        - ip: 10.0.0.0/8      # broader
+        - ip: 10.1.0.0/16     # <-- redundant, already covered by 10.0.0.0/8
 ```
 
 **Fix:** Remove the narrower CIDR (the broader one already matches it), or split the IPSet into multiple sets with distinct ranges if the entries came from different sources.
@@ -2031,14 +2048,15 @@ Reference: <https://docs.aws.amazon.com/waf/latest/developerguide/limits.html>
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: blocked_paths
-    kind: regex
-    items:
-      - "^/admin"
-      - "^/wp-admin"
-      - "^/phpmyadmin"
-      # ... 8 more entries → exceeds 10-pattern cap
+aws:
+  lists:
+    - name: blocked_paths
+      kind: regex
+      items:
+        - "^/admin"
+        - "^/wp-admin"
+        - "^/phpmyadmin"
+        # ... 8 more entries → exceeds 10-pattern cap
 ```
 
 **Fix:** Split the patterns across multiple regex pattern sets (each used by its own rule), or combine them into a single more-permissive regex (e.g. `^/(admin|wp-admin|phpmyadmin|…)`).
@@ -2052,13 +2070,14 @@ An IPv4 or IPv6 CIDR in an IP Set has host bits set (i.e., bits after the prefix
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: allowed-ranges
-    kind: ip
-    items:
-      - ip: "10.0.0.1/24"    # host bits set; should be 10.0.0.0/24
-      - ip: "192.168.1.5/32" # OK (single host)
-      - ip: "2001:db8::1/48" # host bits set; should be 2001:db8::/48
+aws:
+  lists:
+    - name: allowed-ranges
+      kind: ip
+      items:
+        - ip: "10.0.0.1/24"    # host bits set; should be 10.0.0.0/24
+        - ip: "192.168.1.5/32" # OK (single host)
+        - ip: "2001:db8::1/48" # host bits set; should be 2001:db8::/48
 ```
 
 **Fix:** Use canonical CIDR notation with host bits cleared:
@@ -2077,34 +2096,35 @@ A higher-priority rule with a terminating action (Allow, Block, Captcha, Challen
 **Triggers on:**
 
 ```yaml
-lists:
-  - name: blocked-ips-1
-    kind: ip
-    items:
-      - ip: "10.0.0.0/8"
+aws:
+  lists:
+    - name: blocked-ips-1
+      kind: ip
+      items:
+        - ip: "10.0.0.0/8"
 
-  - name: blocked-ips-2
-    kind: ip
-    items:
-      - ip: "10.1.0.0/16"    # overlaps with 10.0.0.0/8
-      - ip: "10.1.0.0/16"    # duplicate entry within same set
+    - name: blocked-ips-2
+      kind: ip
+      items:
+        - ip: "10.1.0.0/16"    # overlaps with 10.0.0.0/8
+        - ip: "10.1.0.0/16"    # duplicate entry within same set
 
-aws_waf_custom_rules:
-  - ref: block-bad-1
-    Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      IPSetReferenceStatement:
-        ARN: arn:.../ipset/blocked-ips-1/...
+  waf_custom_rules:
+    - ref: block-bad-1
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        IPSetReferenceStatement:
+          ARN: arn:.../ipset/blocked-ips-1/...
 
-  - ref: block-bad-2
-    Priority: 20
-    Action:
-      Block: {}
-    Statement:
-      IPSetReferenceStatement:
-        ARN: arn:.../ipset/blocked-ips-2/...  # overlaps with rule 1
+    - ref: block-bad-2
+      Priority: 20
+      Action:
+        Block: {}
+      Statement:
+        IPSetReferenceStatement:
+          ARN: arn:.../ipset/blocked-ips-2/...  # overlaps with rule 1
 ```
 
 **Fix:** Consolidate overlapping IP Sets into a single list, or remove duplicates within a list.
@@ -2408,21 +2428,25 @@ An `AndStatement` contains two or more `ByteMatchStatement` entries on the same 
 **Fix:** Use `CONTAINS` or other match types to allow both patterns, or split the rule to evaluate different fields:
 
 ```yaml
-    Statement:
-      OrStatement:  # either path
-        Statements:
-          - ByteMatchStatement:
-              SearchString: "/admin"
-              FieldToMatch:
-                UriPath: {}
-              PositionalConstraint: EXACTLY
-              ...
-          - ByteMatchStatement:
-              SearchString: "/login"
-              FieldToMatch:
-                UriPath: {}
-              PositionalConstraint: EXACTLY
-              ...
+aws:
+  waf_custom_rules:
+    - ref: allow-either-path
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        OrStatement:  # either path
+          Statements:
+            - ByteMatchStatement:
+                SearchString: "/admin"
+                FieldToMatch:
+                  UriPath: {}
+                PositionalConstraint: EXACTLY
+            - ByteMatchStatement:
+                SearchString: "/login"
+                FieldToMatch:
+                  UriPath: {}
+                PositionalConstraint: EXACTLY
 ```
 
 ---
@@ -2438,19 +2462,20 @@ A rule has `enabled: false`, which means it will not be applied. This is an info
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: legacy-block
-    enabled: false
-    Priority: 10
-    Action:
-      Block: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: ["CN"]
-    VisibilityConfig:
-      SampledRequestsEnabled: true
-      CloudWatchMetricsEnabled: true
-      MetricName: LegacyBlock
+aws:
+  waf_custom_rules:
+    - ref: legacy-block
+      enabled: false
+      Priority: 10
+      Action:
+        Block: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: ["CN"]
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: LegacyBlock
 ```
 
 **Fix:** Remove the rule entirely if it is no longer needed, or set `enabled: true` (or remove the `enabled` key) to re-enable it.
@@ -2484,27 +2509,28 @@ Count actions do not terminate — they log and continue to the next rule.
 **Triggers on:**
 
 ```yaml
-aws_waf_custom_rules:
-  - ref: catch-all
-    Priority: 0
-    Action:
-      Block: {}
-    Statement:
-      GeoMatchStatement:
-        CountryCodes: [US, CA, GB, ...]  # 200+ countries
-  - ref: specific-rule                    # unreachable
-    Priority: 1
-    Action:
-      Block: {}
-    Statement:
-      ByteMatchStatement:
-        SearchString: "admin"
-        FieldToMatch:
-          UriPath: {}
-        PositionalConstraint: CONTAINS
-        TextTransformations:
-          - Priority: 0
-            Type: NONE
+aws:
+  waf_custom_rules:
+    - ref: catch-all
+      Priority: 0
+      Action:
+        Block: {}
+      Statement:
+        GeoMatchStatement:
+          CountryCodes: [US, CA, GB, ...]  # 200+ countries
+    - ref: specific-rule                    # unreachable
+      Priority: 1
+      Action:
+        Block: {}
+      Statement:
+        ByteMatchStatement:
+          SearchString: "admin"
+          FieldToMatch:
+            UriPath: {}
+          PositionalConstraint: CONTAINS
+          TextTransformations:
+            - Priority: 0
+              Type: NONE
 ```
 
 **Fix:** Reorder rules so the catch-all rule has a higher priority number, or add a `ScopeDownStatement` to narrow its scope.

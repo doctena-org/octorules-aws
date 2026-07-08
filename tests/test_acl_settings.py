@@ -614,23 +614,6 @@ class TestAclSettingsFormatter:
         assert adds == 0
         assert removes == 0
 
-    def test_format_report_drift(self):
-        fmt = AclSettingsFormatter()
-        plan = self._make_plan()
-        phases_data: list[dict] = []
-        result = fmt.format_report([plan], False, phases_data)
-        assert result is True
-        assert len(phases_data) == 1
-        assert phases_data[0]["provider_id"] == "aws_waf_settings"
-        assert phases_data[0]["modifies"] == 1
-
-    def test_format_report_no_drift(self):
-        fmt = AclSettingsFormatter()
-        phases_data: list[dict] = []
-        result = fmt.format_report([AclSettingsPlan()], False, phases_data)
-        assert result is False
-        assert phases_data == []
-
 
 # ---------------------------------------------------------------------------
 # Registration test

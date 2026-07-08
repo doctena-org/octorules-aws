@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.11.0] - 2026-07-26
 
 ### Added
 - Zone files can nest all AWS WAF sections under a single `aws:` block; the flat spelling is deprecated.
@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Minimum `octorules` dependency: `>=0.32.0`.
 - ACL-settings plan rendering now uses the shared settings framework from
   octorules 0.32.0 (no output changes).
+
+### Fixed
+- WA158 and WA162–WA164 read the documented `- ip:` mapping item shape
+  in `lists`; they previously only fired on bare-string items.
 
 ## [0.10.0] - 2026-06-11
 

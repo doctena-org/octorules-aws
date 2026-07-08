@@ -17,14 +17,14 @@ def lint_config(tmp_path):
     rules_dir = tmp_path / "rules"
     rules_dir.mkdir()
 
-    # Clean IP set — public CIDRs only.
+    # Clean IP set — public CIDRs only, canonical mapping item shape.
     (rules_dir / "clean-acl.yaml").write_text(
         "lists:\n"
         "  - name: allowed-ips\n"
         "    kind: ip\n"
         "    items:\n"
-        "      - 1.2.3.0/24\n"
-        "      - 8.8.8.0/24\n"
+        "      - ip: 1.2.3.0/24\n"
+        "      - ip: 8.8.8.0/24\n"
     )
 
     # Bad IP set — triggers WA162 (reserved) + WA163 (catch-all) + WA164 (overlap).
@@ -33,10 +33,10 @@ def lint_config(tmp_path):
         "  - name: messy-ips\n"
         "    kind: ip\n"
         "    items:\n"
-        "      - 10.0.0.0/8\n"  # WA162: RFC 1918
-        "      - 0.0.0.0/0\n"  # WA163: catch-all
-        "      - 172.16.0.0/12\n"  # WA162
-        "      - 172.20.0.0/16\n"  # WA162 + WA164 (overlaps 172.16.0.0/12)
+        "      - ip: 10.0.0.0/8\n"  # WA162: RFC 1918
+        "      - ip: 0.0.0.0/0\n"  # WA163: catch-all
+        "      - ip: 172.16.0.0/12\n"  # WA162
+        "      - ip: 172.20.0.0/16\n"  # WA162 + WA164 (overlaps 172.16.0.0/12)
     )
 
     config_file = tmp_path / "config.yaml"

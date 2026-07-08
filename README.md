@@ -71,8 +71,7 @@ The [`examples/`](examples/) directory contains a working single-provider
 `config.yaml` plus `rules/my-web-acl.yaml` demonstrating every supported
 phase and key using the nested `aws:` format. Copy it as a starting point.
 
-Zone files can nest all AWS WAF sections under a single `aws:` block; the flat
-spelling (e.g., `aws_waf_custom_rules:` at the top level) is deprecated.
+Zone files nest all AWS WAF sections under a single `aws:` block.
 
 ## Supported features
 
@@ -92,10 +91,10 @@ spelling (e.g., `aws_waf_custom_rules:` at the top level) is deprecated.
 
 | octorules phase | AWS WAF concept |
 |---|---|
-| `aws_waf_custom_rules` | Custom rules (IP match, geo match, byte match, etc.) |
-| `aws_waf_rate_rules` | Rate-based rules |
-| `aws_waf_managed_rules` | Managed rule group references |
-| `aws_waf_rule_group_rules` | Rule group references |
+| `aws.waf_custom_rules` | Custom rules (IP match, geo match, byte match, etc.) |
+| `aws.waf_rate_rules` | Rate-based rules |
+| `aws.waf_managed_rules` | Managed rule group references |
+| `aws.waf_rule_group_rules` | Rule group references |
 
 All phases require `action` to be specified explicitly (no default action).
 

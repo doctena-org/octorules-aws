@@ -9,7 +9,7 @@ validate_extension, and dump_extension -- same pattern as Azure's policy
 settings in ``octorules_azure/_policy_settings.py``.
 
 The Change and Plan classes inherit from octorules.extensions for API
-compatibility with the shared settings framework (v0.31.0+).
+compatibility with the shared settings framework.
 """
 
 import logging
@@ -223,7 +223,7 @@ class AclSettingsFormatter(SettingsFormatter):
     """Formats ACL settings diffs for plan output.
 
     Inherits standard format methods (format_text, format_json, format_markdown,
-    format_html, format_report) from octorules.extensions.SettingsFormatter,
+    format_html) from octorules.extensions.SettingsFormatter,
     parameterized with AWS WAF-specific prefix and provider identifiers.
     """
 
@@ -238,8 +238,6 @@ class AclSettingsFormatter(SettingsFormatter):
         super().__init__(
             plan_type=AclSettingsPlan,
             prefix="acl_settings",
-            phase="acl_settings",
-            provider_id="aws_waf_settings",
         )
 
     def format_plan(self, plans: list, zone_name: str) -> list[str]:

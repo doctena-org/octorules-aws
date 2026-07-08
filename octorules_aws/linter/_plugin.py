@@ -365,7 +365,7 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
                 )
             continue
         # WA158: IP set address cap. Deduplicate — AWS counts unique addresses.
-        unique_count = len(set(str(i) for i in items))
+        unique_count = len(set(_item_value(i) for i in items))
         if unique_count > _MAX_IPSET_ITEMS:
             dup_note = ""
             if unique_count < len(items):
@@ -387,10 +387,21 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
 # (single source of truth across providers; see core v0.26.0).
 
 
+def _item_value(item: object) -> str:
+    """Extract the comparable value from a lists item.
+
+    Items are mappings in the canonical zone-file shape (``- ip: 10.0.0.0/8``,
+    ``- pattern: "Bad.*"``); bare strings are tolerated defensively.
+    """
+    if isinstance(item, dict):
+        return str(item.get("ip", item.get("pattern", "")))
+    return str(item)
+
+
 def _iter_ip_lists(
     rules_data: dict[str, Any],
 ) -> Iterable[tuple[str, list]]:
-    """Yield (name, items) for each IP kind entry under ``lists``."""
+    """Yield (name, item value strings) for each IP kind entry under ``lists``."""
     lists_section = rules_data.get("lists")
     if not isinstance(lists_section, list):
         return
@@ -402,7 +413,7 @@ def _iter_ip_lists(
         items = lst.get("items")
         if not isinstance(items, list):
             continue
-        yield lst.get("name", "<unknown>"), items
+        yield lst.get("name", "<unknown>"), [_item_value(i) for i in items]
 
 
 def _check_list_reserved_ips(rules_data: dict[str, Any], ctx: LintContext) -> None:
