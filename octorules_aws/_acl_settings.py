@@ -200,7 +200,7 @@ def _validate_acl_settings(desired, zone_name, errors, lines):
         errors.append(f"  {zone_name}/aws_waf_settings: CustomResponseBodies must be a dict")
 
 
-def _dump_acl_settings(scope, provider, out_dir):
+def _dump_acl_settings(scope, provider):
     """Export current ACL settings to dump output."""
     from octorules.provider.exceptions import ProviderAuthError, ProviderError
 
@@ -277,7 +277,6 @@ def register_acl_settings() -> None:
 
     from octorules.extensions import (
         register_apply_extension,
-        register_dump_extension,
         register_format_extension,
         register_plan_zone_hook,
         register_validate_extension,
@@ -287,4 +286,3 @@ def register_acl_settings() -> None:
     register_apply_extension("aws_waf_settings", _apply_acl_settings)
     register_format_extension("aws_waf_settings", AclSettingsFormatter())
     register_validate_extension(_validate_acl_settings)
-    register_dump_extension(_dump_acl_settings)

@@ -1006,3 +1006,16 @@ class AwsWafProvider:
                 "items": items,
             }
         return results
+
+    # --- Dump ---
+
+    def dump_extra_sections(self, scope: Scope) -> dict:
+        """AWS WAF-owned settings sections for the dumped zone file.
+
+        Called only with this provider, so a section can never be requested
+        from a provider that cannot fetch it — the reason dump is a method
+        here and not an extension registry.
+        """
+        from octorules_aws._acl_settings import _dump_acl_settings
+
+        return _dump_acl_settings(scope, self) or {}

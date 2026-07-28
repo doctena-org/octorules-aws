@@ -535,26 +535,26 @@ class TestDumpHook:
     def test_dumps_settings(self):
         provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {"DefaultAction": {"Allow": {}}}
-        result = _dump_acl_settings(_zs(), provider, "/tmp")
+        result = _dump_acl_settings(_zs(), provider)
         assert result == {"aws_waf_settings": {"DefaultAction": {"Allow": {}}}}
 
     def test_returns_none_on_error(self):
         provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderError("fail")
-        result = _dump_acl_settings(_zs(), provider, "/tmp")
+        result = _dump_acl_settings(_zs(), provider)
         assert result is None
 
     def test_returns_none_on_empty(self):
         provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {}
-        result = _dump_acl_settings(_zs(), provider, "/tmp")
+        result = _dump_acl_settings(_zs(), provider)
         assert result is None
 
     def test_reraises_auth_error(self):
         provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.side_effect = ProviderAuthError("denied")
         with pytest.raises(ProviderAuthError):
-            _dump_acl_settings(_zs(), provider, "/tmp")
+            _dump_acl_settings(_zs(), provider)
 
 
 # ---------------------------------------------------------------------------
