@@ -173,6 +173,9 @@ class AwsWafProvider:
     NAMESPACE = "aws"
     SUPPORTS = frozenset({"custom_rulesets", "lists", "zone_discovery"})
 
+    # Built lazily by the `extensions` property.
+    _extensions: list | None = None
+
     def __init__(
         self,
         *,
@@ -1007,15 +1010,30 @@ class AwsWafProvider:
             }
         return results
 
+    # --- Extensions ---
+
+    @property
+    def extensions(self) -> list:
+        """AWS WAF's own provider extensions.
+
+        Core walks this instead of a global registry, so an extension is
+        only ever handed the provider that owns it.
+        """
+        from octorules_aws._acl_settings import AclSettingsExtension
+
+        if self._extensions is None:
+            self._extensions = [
+                AclSettingsExtension(),
+            ]
+        return self._extensions
+
     # --- Dump ---
 
     def dump_extra_sections(self, scope: Scope) -> dict:
-        """AWS WAF-owned settings sections for the dumped zone file.
-
-        Called only with this provider, so a section can never be requested
-        from a provider that cannot fetch it — the reason dump is a method
-        here and not an extension registry.
-        """
-        from octorules_aws._acl_settings import _dump_acl_settings
-
-        return _dump_acl_settings(scope, self) or {}
+        """AWS WAF-owned sections for the dumped zone file."""
+        result: dict = {}
+        for ext in self.extensions:
+            data = ext.dump(scope, self)
+            if data:
+                result.update(data)
+        return result

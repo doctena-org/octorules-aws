@@ -14,7 +14,7 @@ compatibility with the shared settings framework.
 
 import logging
 
-from octorules.extensions import SettingsChange, SettingsFormatter, SettingsPlan
+from octorules.extensions import ProviderExtension, SettingsChange, SettingsFormatter, SettingsPlan
 
 log = logging.getLogger(__name__)
 
@@ -260,6 +260,31 @@ class AclSettingsFormatter(SettingsFormatter):
             if isinstance(plan, AclSettingsPlan):
                 count += sum(1 for c in plan.changes if c.has_changes)
         return count
+
+
+# ---------------------------------------------------------------------------
+# Extension
+# ---------------------------------------------------------------------------
+class AclSettingsExtension(ProviderExtension):
+    """Web ACL-level settings."""
+
+    section = "aws_waf_settings"
+    formatter = AclSettingsFormatter()
+
+    def prefetch(self, desired, scope, provider):
+        return _prefetch_acl_settings(desired, scope, provider)
+
+    def finalize(self, zp, desired, scope, provider, ctx):
+        return _finalize_acl_settings(zp, desired, scope, provider, ctx)
+
+    def apply(self, zp, plans, scope, provider):
+        return _apply_acl_settings(zp, plans, scope, provider)
+
+    def dump(self, scope, provider):
+        return _dump_acl_settings(scope, provider)
+
+    def validate(self, desired, zone_name, errors, lines):
+        return _validate_acl_settings(desired, zone_name, errors, lines)
 
 
 # ---------------------------------------------------------------------------
