@@ -7,7 +7,13 @@ import threading
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 from octorules.config import ConfigError
-from octorules.provider.base import PhaseRulesResult, Scope
+from octorules.provider.base import (
+    SUPPORTS_CUSTOM_RULESETS,
+    SUPPORTS_LISTS,
+    SUPPORTS_ZONE_DISCOVERY,
+    PhaseRulesResult,
+    Scope,
+)
 from octorules.provider.exceptions import ProviderAuthError, ProviderError
 from octorules.provider.utils import denormalize_fields, make_error_wrapper, normalize_fields
 from octorules.retry import retry_with_backoff
@@ -171,7 +177,7 @@ class AwsWafProvider:
     """
 
     NAMESPACE = "aws"
-    SUPPORTS = frozenset({"custom_rulesets", "lists", "zone_discovery"})
+    SUPPORTS = frozenset({SUPPORTS_CUSTOM_RULESETS, SUPPORTS_LISTS, SUPPORTS_ZONE_DISCOVERY})
 
     # Built lazily by the `extensions` property.
     _extensions: list | None = None

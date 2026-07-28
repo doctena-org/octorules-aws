@@ -2143,3 +2143,24 @@ class TestRegexPatternSets:
         regex_results = [r for r in result if r["kind"] == "regex"]
         assert len(regex_results) == 2
         assert mock_waf_client.list_regex_pattern_sets.call_count == 2
+
+
+def test_supports_uses_the_shared_constants():
+    """SUPPORTS is built from core's constants, not bare strings.
+
+    A mistyped literal would silently disable a feature — the capability
+    check fails closed, so `frozenset({"custom_ruleset"})` would make lists
+    and custom rulesets quietly unmanaged. Importing the constant turns that
+    typo into an ImportError at module load.
+    """
+    from octorules.provider.base import (
+        SUPPORTS_CUSTOM_RULESETS,
+        SUPPORTS_LISTS,
+        SUPPORTS_ZONE_DISCOVERY,
+    )
+
+    from octorules_aws.provider import AwsWafProvider
+
+    assert AwsWafProvider.SUPPORTS == frozenset(
+        {SUPPORTS_CUSTOM_RULESETS, SUPPORTS_LISTS, SUPPORTS_ZONE_DISCOVERY}
+    )
