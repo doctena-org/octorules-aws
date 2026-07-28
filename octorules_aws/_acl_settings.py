@@ -301,13 +301,9 @@ def register_acl_settings() -> None:
     _registered = True
 
     from octorules.extensions import (
-        register_apply_extension,
         register_format_extension,
-        register_plan_zone_hook,
         register_validate_extension,
     )
 
-    register_plan_zone_hook(_prefetch_acl_settings, _finalize_acl_settings)
-    register_apply_extension("aws.waf_settings", _apply_acl_settings)
     register_format_extension("aws.waf_settings", AclSettingsFormatter())
     register_validate_extension(_validate_acl_settings)
