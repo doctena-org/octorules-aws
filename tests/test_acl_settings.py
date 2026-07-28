@@ -234,7 +234,7 @@ class TestValidateAclSettings:
     def test_valid_settings(self):
         errors = []
         desired = {
-            "aws_waf_settings": {
+            "aws.waf_settings": {
                 "DefaultAction": {"Allow": {}},
                 "VisibilityConfig": {"SampledRequestsEnabled": True},
                 "ChallengeConfig": {"ImmunityTimeProperty": {"ImmunityTime": 300}},
@@ -254,13 +254,13 @@ class TestValidateAclSettings:
 
     def test_non_dict_settings(self):
         errors = []
-        _validate_acl_settings({"aws_waf_settings": "bad"}, "my-acl", errors, [])
+        _validate_acl_settings({"aws.waf_settings": "bad"}, "my-acl", errors, [])
         assert errors == []  # Non-dict is silently ignored
 
     def test_invalid_default_action_not_dict(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"DefaultAction": "Allow"}}, "my-acl", errors, []
+            {"aws.waf_settings": {"DefaultAction": "Allow"}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "DefaultAction must be a dict" in errors[0]
@@ -268,7 +268,7 @@ class TestValidateAclSettings:
     def test_invalid_default_action_wrong_key(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"DefaultAction": {"Challenge": {}}}}, "my-acl", errors, []
+            {"aws.waf_settings": {"DefaultAction": {"Challenge": {}}}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "exactly one key from" in errors[0]
@@ -278,7 +278,7 @@ class TestValidateAclSettings:
         errors = []
         _validate_acl_settings(
             {
-                "aws_waf_settings": {
+                "aws.waf_settings": {
                     "DefaultAction": "Allow",
                     "VisibilityConfig": "nope",
                     "CustomResponseBodies": [],
@@ -296,7 +296,7 @@ class TestValidateAclSettings:
     def test_invalid_default_action_multiple_keys(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"DefaultAction": {"Allow": {}, "Block": {}}}},
+            {"aws.waf_settings": {"DefaultAction": {"Allow": {}, "Block": {}}}},
             "my-acl",
             errors,
             [],
@@ -306,41 +306,41 @@ class TestValidateAclSettings:
     def test_invalid_visibility_config(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"VisibilityConfig": "bad"}}, "my-acl", errors, []
+            {"aws.waf_settings": {"VisibilityConfig": "bad"}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "VisibilityConfig must be a dict" in errors[0]
 
     def test_invalid_challenge_config(self):
         errors = []
-        _validate_acl_settings({"aws_waf_settings": {"ChallengeConfig": 42}}, "my-acl", errors, [])
+        _validate_acl_settings({"aws.waf_settings": {"ChallengeConfig": 42}}, "my-acl", errors, [])
         assert len(errors) == 1
         assert "ChallengeConfig must be a dict" in errors[0]
 
     def test_invalid_captcha_config(self):
         errors = []
-        _validate_acl_settings({"aws_waf_settings": {"CaptchaConfig": True}}, "my-acl", errors, [])
+        _validate_acl_settings({"aws.waf_settings": {"CaptchaConfig": True}}, "my-acl", errors, [])
         assert len(errors) == 1
         assert "CaptchaConfig must be a dict" in errors[0]
 
     def test_invalid_token_domains_not_list(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"TokenDomains": "example.com"}}, "my-acl", errors, []
+            {"aws.waf_settings": {"TokenDomains": "example.com"}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "TokenDomains must be a list" in errors[0]
 
     def test_invalid_token_domains_not_strings(self):
         errors = []
-        _validate_acl_settings({"aws_waf_settings": {"TokenDomains": [123]}}, "my-acl", errors, [])
+        _validate_acl_settings({"aws.waf_settings": {"TokenDomains": [123]}}, "my-acl", errors, [])
         assert len(errors) == 1
         assert "list of strings" in errors[0]
 
     def test_invalid_association_config(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"AssociationConfig": []}}, "my-acl", errors, []
+            {"aws.waf_settings": {"AssociationConfig": []}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "AssociationConfig must be a dict" in errors[0]
@@ -348,7 +348,7 @@ class TestValidateAclSettings:
     def test_invalid_custom_response_bodies(self):
         errors = []
         _validate_acl_settings(
-            {"aws_waf_settings": {"CustomResponseBodies": []}}, "my-acl", errors, []
+            {"aws.waf_settings": {"CustomResponseBodies": []}}, "my-acl", errors, []
         )
         assert len(errors) == 1
         assert "CustomResponseBodies must be a dict" in errors[0]
@@ -465,7 +465,7 @@ class TestPrefetchHook:
         provider.get_acl_settings.return_value = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Block": {}}}
 
-        result = _prefetch_acl_settings({"aws_waf_settings": desired}, _zs(), provider)
+        result = _prefetch_acl_settings({"aws.waf_settings": desired}, _zs(), provider)
         assert result == ({"DefaultAction": {"Allow": {}}}, desired)
 
     def test_handles_provider_error(self):
@@ -473,7 +473,7 @@ class TestPrefetchHook:
         provider.get_acl_settings.side_effect = ProviderError("fail")
         desired = {"DefaultAction": {"Block": {}}}
 
-        result = _prefetch_acl_settings({"aws_waf_settings": desired}, _zs(), provider)
+        result = _prefetch_acl_settings({"aws.waf_settings": desired}, _zs(), provider)
         assert result == ({}, desired)
 
     def test_reraises_auth_error(self):
@@ -482,7 +482,7 @@ class TestPrefetchHook:
 
         with pytest.raises(ProviderAuthError):
             _prefetch_acl_settings(
-                {"aws_waf_settings": {"DefaultAction": {"Block": {}}}}, _zs(), provider
+                {"aws.waf_settings": {"DefaultAction": {"Block": {}}}}, _zs(), provider
             )
 
 
@@ -498,8 +498,8 @@ class TestFinalizeHook:
         current = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Block": {}}}
         _finalize_acl_settings(zp, {}, _zs(), MagicMock(spec=AwsWafProvider), (current, desired))
-        assert "aws_waf_settings" in zp.extension_plans
-        assert len(zp.extension_plans["aws_waf_settings"]) == 1
+        assert "aws.waf_settings" in zp.extension_plans
+        assert len(zp.extension_plans["aws.waf_settings"]) == 1
 
     def test_skips_when_no_changes(self):
         zp = MagicMock()
@@ -507,7 +507,7 @@ class TestFinalizeHook:
         current = {"DefaultAction": {"Allow": {}}}
         desired = {"DefaultAction": {"Allow": {}}}
         _finalize_acl_settings(zp, {}, _zs(), MagicMock(spec=AwsWafProvider), (current, desired))
-        assert "aws_waf_settings" not in zp.extension_plans
+        assert "aws.waf_settings" not in zp.extension_plans
 
 
 class TestApplyHook:
@@ -518,7 +518,7 @@ class TestApplyHook:
         )
         zp = MagicMock()
         synced, _ = _apply_acl_settings(zp, [plan], _zs(), provider)
-        assert synced == ["aws_waf_settings"]
+        assert synced == ["aws.waf_settings"]
         provider.update_acl_settings.assert_called_once_with(
             _zs(), {"DefaultAction": {"Block": {}}}
         )
@@ -536,7 +536,7 @@ class TestDumpHook:
         provider = MagicMock(spec=AwsWafProvider)
         provider.get_acl_settings.return_value = {"DefaultAction": {"Allow": {}}}
         result = _dump_acl_settings(_zs(), provider)
-        assert result == {"aws_waf_settings": {"DefaultAction": {"Allow": {}}}}
+        assert result == {"aws.waf_settings": {"DefaultAction": {"Allow": {}}}}
 
     def test_returns_none_on_error(self):
         provider = MagicMock(spec=AwsWafProvider)
@@ -622,7 +622,7 @@ class TestRegistration:
     def test_non_phase_key_registered(self):
         from octorules.phases import KNOWN_NON_PHASE_KEYS
 
-        assert "aws_waf_settings" in KNOWN_NON_PHASE_KEYS
+        assert "aws.waf_settings" in KNOWN_NON_PHASE_KEYS
 
     def test_register_idempotent(self):
         """Calling register_acl_settings() twice does not raise."""

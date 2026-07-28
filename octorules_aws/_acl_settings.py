@@ -111,7 +111,7 @@ def diff_acl_settings(current: dict, desired: dict) -> AclSettingsPlan:
 # ---------------------------------------------------------------------------
 def _prefetch_acl_settings(all_desired, scope, provider):
     """Prefetch: fetch current ACL settings."""
-    desired = all_desired.get("aws_waf_settings")
+    desired = all_desired.get("aws.waf_settings")
     if desired is None:
         return None
 
@@ -136,7 +136,7 @@ def _finalize_acl_settings(zp, all_desired, scope, provider, ctx):
     current, desired = ctx
     plan = diff_acl_settings(current, desired)
     if plan.has_changes:
-        zp.extension_plans.setdefault("aws_waf_settings", []).append(plan)
+        zp.extension_plans.setdefault("aws.waf_settings", []).append(plan)
 
 
 def _apply_acl_settings(zp, plans, scope, provider):
@@ -150,7 +150,7 @@ def _apply_acl_settings(zp, plans, scope, provider):
         desired_values = {c.field: c.desired for c in plan.changes if c.has_changes}
         if desired_values:
             provider.update_acl_settings(scope, desired_values)
-            synced.append("aws_waf_settings")
+            synced.append("aws.waf_settings")
 
     return synced, None
 
@@ -165,7 +165,7 @@ def _assert_dict_type(value: object, field_name: str, zone_name: str, errors: li
 
 def _validate_acl_settings(desired, zone_name, errors, lines):
     """Validate aws_waf_settings offline."""
-    settings = desired.get("aws_waf_settings")
+    settings = desired.get("aws.waf_settings")
     if not isinstance(settings, dict):
         return
 
@@ -212,7 +212,7 @@ def _dump_acl_settings(scope, provider):
         return None
 
     if settings:
-        return {"aws_waf_settings": settings}
+        return {"aws.waf_settings": settings}
     return None
 
 
@@ -233,7 +233,7 @@ class AclSettingsFormatter(SettingsFormatter):
         - plan_type: AclSettingsPlan (for isinstance checks)
         - prefix: "acl_settings" (YAML label prefix)
         - phase: "acl_settings" (report phase name)
-        - provider_id: "aws_waf_settings" (report provider identifier)
+        - provider_id: "aws.waf_settings" (report provider identifier)
         """
         super().__init__(
             plan_type=AclSettingsPlan,
@@ -268,7 +268,7 @@ class AclSettingsFormatter(SettingsFormatter):
 class AclSettingsExtension(ProviderExtension):
     """Web ACL-level settings."""
 
-    section = "aws_waf_settings"
+    section = "aws.waf_settings"
     formatter = AclSettingsFormatter()
 
     def prefetch(self, desired, scope, provider):
@@ -308,6 +308,6 @@ def register_acl_settings() -> None:
     )
 
     register_plan_zone_hook(_prefetch_acl_settings, _finalize_acl_settings)
-    register_apply_extension("aws_waf_settings", _apply_acl_settings)
-    register_format_extension("aws_waf_settings", AclSettingsFormatter())
+    register_apply_extension("aws.waf_settings", _apply_acl_settings)
+    register_format_extension("aws.waf_settings", AclSettingsFormatter())
     register_validate_extension(_validate_acl_settings)

@@ -811,17 +811,17 @@ class TestPhaseRegistration:
     def test_phases_registered(self):
         from octorules.phases import PHASE_BY_NAME, get_phase
 
-        assert "aws_waf_custom_rules" in PHASE_BY_NAME
-        assert "aws_waf_rate_rules" in PHASE_BY_NAME
-        assert "aws_waf_managed_rules" in PHASE_BY_NAME
-        assert "aws_waf_rule_group_rules" in PHASE_BY_NAME
+        assert "aws.waf_custom_rules" in PHASE_BY_NAME
+        assert "aws.waf_rate_rules" in PHASE_BY_NAME
+        assert "aws.waf_managed_rules" in PHASE_BY_NAME
+        assert "aws.waf_rule_group_rules" in PHASE_BY_NAME
 
-        phase = get_phase("aws_waf_custom_rules")
+        phase = get_phase("aws.waf_custom_rules")
         assert phase.provider_id == "aws_waf_custom"
         assert phase.zone_level is True
         assert phase.account_level is False
 
-        rg_phase = get_phase("aws_waf_rule_group_rules")
+        rg_phase = get_phase("aws.waf_rule_group_rules")
         assert rg_phase.provider_id == "aws_waf_rule_group"
 
     def test_phase_ids_derived_from_phases(self):

@@ -3,11 +3,11 @@
 from octorules.phases import Phase
 
 AWS_PHASES = [
-    Phase("aws_waf_custom_rules", "aws_waf_custom", None, zone_level=True, account_level=False),
-    Phase("aws_waf_rate_rules", "aws_waf_rate", None, zone_level=True, account_level=False),
-    Phase("aws_waf_managed_rules", "aws_waf_managed", None, zone_level=True, account_level=False),
+    Phase("aws.waf_custom_rules", "aws_waf_custom", None, zone_level=True, account_level=False),
+    Phase("aws.waf_rate_rules", "aws_waf_rate", None, zone_level=True, account_level=False),
+    Phase("aws.waf_managed_rules", "aws_waf_managed", None, zone_level=True, account_level=False),
     Phase(
-        "aws_waf_rule_group_rules",
+        "aws.waf_rule_group_rules",
         "aws_waf_rule_group",
         None,
         zone_level=True,

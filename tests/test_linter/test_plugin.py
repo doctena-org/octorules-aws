@@ -58,7 +58,7 @@ class TestAwsLint:
         """aws_lint should find errors in rules with missing fields."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {"Priority": -1},  # missing ref, bad priority, missing visibility, missing action
             ],
         }
@@ -81,34 +81,34 @@ class TestAwsLint:
 
     def test_phase_filtering(self):
         """aws_lint should respect ctx.phase_filter."""
-        ctx = LintContext(phase_filter=["aws_waf_rate_rules"])
+        ctx = LintContext(phase_filter=["aws.waf_rate_rules"])
         rules_data = {
-            "aws_waf_custom_rules": [{"Priority": -1}],
-            "aws_waf_rate_rules": [{"Priority": -1}],
+            "aws.waf_custom_rules": [{"Priority": -1}],
+            "aws.waf_rate_rules": [{"Priority": -1}],
         }
         aws_lint(rules_data, ctx)
         # Only rate rules should produce findings
         phases = {r.phase for r in ctx.results}
-        assert "aws_waf_custom_rules" not in phases
-        assert "aws_waf_rate_rules" in phases
+        assert "aws.waf_custom_rules" not in phases
+        assert "aws.waf_rate_rules" in phases
 
     def test_non_list_phase_emits_wa024(self):
         """aws_lint should emit WA024 when a phase value is not a list."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": "not-a-list",
+            "aws.waf_custom_rules": "not-a-list",
         }
         aws_lint(rules_data, ctx)
         wa024 = [r for r in ctx.results if r.rule_id == "WA024"]
         assert len(wa024) == 1
-        assert wa024[0].phase == "aws_waf_custom_rules"
+        assert wa024[0].phase == "aws.waf_custom_rules"
         assert "not a list" in wa024[0].message
 
     def test_non_list_phase_dict_emits_wa024(self):
         """A dict value for a phase should also trigger WA024."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": {"ref": "oops"},
+            "aws.waf_custom_rules": {"ref": "oops"},
         }
         aws_lint(rules_data, ctx)
         wa024 = [r for r in ctx.results if r.rule_id == "WA024"]
@@ -118,7 +118,7 @@ class TestAwsLint:
         """A non-list phase should not produce per-rule errors (no crash)."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": 42,
+            "aws.waf_custom_rules": 42,
         }
         aws_lint(rules_data, ctx)
         ids = [r.rule_id for r in ctx.results]
@@ -129,7 +129,7 @@ class TestAwsLint:
         """aws_lint should produce no results for valid rules."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "good-rule",
                     "Priority": 1,
@@ -152,7 +152,7 @@ class TestAwsLint:
         """aws_lint should respect the severity filter on the context."""
         ctx = LintContext(severity_filter=Severity.ERROR)
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "test-rule",
                     "Priority": 1,
@@ -175,7 +175,7 @@ class TestAwsLint:
         """WA600 should fire for enabled: false through the full pipeline."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "disabled-rule",
                     "enabled": False,
@@ -193,13 +193,13 @@ class TestAwsLint:
         aws_lint(rules_data, ctx)
         wa600 = [r for r in ctx.results if r.rule_id == "WA600"]
         assert len(wa600) == 1
-        assert wa600[0].phase == "aws_waf_custom_rules"
+        assert wa600[0].phase == "aws.waf_custom_rules"
 
     def test_wa600_filtered_by_severity(self):
         """WA600 (INFO) should be excluded when severity filter is WARNING."""
         ctx = LintContext(severity_filter=Severity.WARNING)
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "disabled-rule",
                     "enabled": False,
@@ -222,17 +222,17 @@ class TestAwsLint:
         """aws_lint should check all AWS phases present in the data."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [{"Priority": -1}],
-            "aws_waf_rate_rules": [{"Priority": -1}],
-            "aws_waf_managed_rules": [{"Priority": -1}],
-            "aws_waf_rule_group_rules": [{"Priority": -1}],
+            "aws.waf_custom_rules": [{"Priority": -1}],
+            "aws.waf_rate_rules": [{"Priority": -1}],
+            "aws.waf_managed_rules": [{"Priority": -1}],
+            "aws.waf_rule_group_rules": [{"Priority": -1}],
         }
         aws_lint(rules_data, ctx)
         phases = {r.phase for r in ctx.results}
-        assert "aws_waf_custom_rules" in phases
-        assert "aws_waf_rate_rules" in phases
-        assert "aws_waf_managed_rules" in phases
-        assert "aws_waf_rule_group_rules" in phases
+        assert "aws.waf_custom_rules" in phases
+        assert "aws.waf_rate_rules" in phases
+        assert "aws.waf_managed_rules" in phases
+        assert "aws.waf_rule_group_rules" in phases
 
 
 class TestCrossPhaseMetricName:
@@ -254,8 +254,8 @@ class TestCrossPhaseMetricName:
     def test_same_metric_across_phases_fires(self):
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [self._make_rule("r1", "shared-metric")],
-            "aws_waf_rate_rules": [self._make_rule("r2", "shared-metric")],
+            "aws.waf_custom_rules": [self._make_rule("r1", "shared-metric")],
+            "aws.waf_rate_rules": [self._make_rule("r2", "shared-metric")],
         }
         aws_lint(rules_data, ctx)
         wa501 = [r for r in ctx.results if r.rule_id == "WA501"]
@@ -266,7 +266,7 @@ class TestCrossPhaseMetricName:
         """Within-phase duplicates are caught by WA500, not WA501."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", "same"),
                 self._make_rule("r2", "same"),
             ],
@@ -280,8 +280,8 @@ class TestCrossPhaseMetricName:
     def test_unique_metrics_across_phases_ok(self):
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [self._make_rule("r1", "metric-a")],
-            "aws_waf_rate_rules": [self._make_rule("r2", "metric-b")],
+            "aws.waf_custom_rules": [self._make_rule("r1", "metric-a")],
+            "aws.waf_rate_rules": [self._make_rule("r2", "metric-b")],
         }
         aws_lint(rules_data, ctx)
         wa501 = [r for r in ctx.results if r.rule_id == "WA501"]
@@ -308,7 +308,7 @@ class TestDuplicateStatement:
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", stmt),
                 self._make_rule("r2", 2, "m2", stmt),
             ],
@@ -322,7 +322,7 @@ class TestDuplicateStatement:
     def test_wa520_different_statements_ok(self):
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", {"GeoMatchStatement": {"CountryCodes": ["US"]}}),
                 self._make_rule("r2", 2, "m2", {"GeoMatchStatement": {"CountryCodes": ["DE"]}}),
             ],
@@ -336,8 +336,8 @@ class TestDuplicateStatement:
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
-            "aws_waf_rate_rules": [self._make_rule("r2", 1, "m2", stmt)],
+            "aws.waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
+            "aws.waf_rate_rules": [self._make_rule("r2", 1, "m2", stmt)],
         }
         aws_lint(rules_data, ctx)
         wa520 = [r for r in ctx.results if r.rule_id == "WA520"]
@@ -363,7 +363,7 @@ class TestDuplicateStatement:
             }
         }
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", stmt1),
                 self._make_rule("r2", 2, "m2", stmt2),
             ],
@@ -377,7 +377,7 @@ class TestDuplicateStatement:
         stmt = {"GeoMatchStatement": {"CountryCodes": ["FR"]}}
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", stmt),
                 self._make_rule("r2", 2, "m2", stmt),
                 self._make_rule("r3", 3, "m3", stmt),
@@ -392,9 +392,9 @@ class TestDuplicateStatement:
 
     def test_wa520_respects_phase_filter(self):
         stmt = {"GeoMatchStatement": {"CountryCodes": ["US"]}}
-        ctx = LintContext(phase_filter=["aws_waf_rate_rules"])
+        ctx = LintContext(phase_filter=["aws.waf_rate_rules"])
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", stmt),
                 self._make_rule("r2", 2, "m2", stmt),
             ],
@@ -424,7 +424,7 @@ class TestWcuCapacity:
         """A few simple rules should not trigger WA340."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule("r1", 1, "m1", {"GeoMatchStatement": {"CountryCodes": ["US"]}}),
                 self._make_rule("r2", 2, "m2", {"GeoMatchStatement": {"CountryCodes": ["DE"]}}),
             ],
@@ -453,7 +453,7 @@ class TestWcuCapacity:
                     },
                 )
             )
-        rules_data = {"aws_waf_managed_rules": rules}
+        rules_data = {"aws.waf_managed_rules": rules}
         aws_lint(rules_data, ctx)
         wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
         assert len(wa340) == 1
@@ -474,7 +474,7 @@ class TestWcuCapacity:
                     {"GeoMatchStatement": {"CountryCodes": ["US"]}},
                 )
             )
-        rules_data = {"aws_waf_custom_rules": rules}
+        rules_data = {"aws.waf_custom_rules": rules}
         aws_lint(rules_data, ctx)
         wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
         assert len(wa340) == 0
@@ -514,8 +514,8 @@ class TestWcuCapacity:
                 )
             )
         rules_data = {
-            "aws_waf_managed_rules": rules_per_phase,
-            "aws_waf_custom_rules": rules_per_phase2,
+            "aws.waf_managed_rules": rules_per_phase,
+            "aws.waf_custom_rules": rules_per_phase2,
         }
         aws_lint(rules_data, ctx)
         wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
@@ -523,7 +523,7 @@ class TestWcuCapacity:
 
     def test_wa340_respects_phase_filter(self):
         """WA340 should respect ctx.phase_filter."""
-        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        ctx = LintContext(phase_filter=["aws.waf_custom_rules"])
         # Put expensive rules in managed_rules (filtered out)
         rules = []
         for i in range(16):
@@ -540,7 +540,7 @@ class TestWcuCapacity:
                     },
                 )
             )
-        rules_data = {"aws_waf_managed_rules": rules}
+        rules_data = {"aws.waf_managed_rules": rules}
         aws_lint(rules_data, ctx)
         wa340 = [r for r in ctx.results if r.rule_id == "WA340"]
         assert len(wa340) == 0
@@ -574,7 +574,7 @@ class TestIpSetReferences:
             "lists": [
                 {"name": "allowed-ips", "kind": "ip", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -595,7 +595,7 @@ class TestIpSetReferences:
             "lists": [
                 {"name": "blocked-ips", "kind": "ip", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -612,7 +612,7 @@ class TestIpSetReferences:
         """Without a lists section, WA326 does not fire."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -644,7 +644,7 @@ class TestIpSetReferences:
             "lists": [
                 {"name": "allowed-ips", "kind": "ip", "items": []},
             ],
-            "aws_waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
+            "aws.waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
         }
         aws_lint(rules_data, ctx)
         wa326 = [r for r in ctx.results if r.rule_id == "WA326"]
@@ -658,7 +658,7 @@ class TestIpSetReferences:
             "lists": [
                 {"name": "allowed-ips", "kind": "ip", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -684,7 +684,7 @@ class TestIpSetReferences:
         ctx = LintContext()
         rules_data = {
             "lists": [],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -729,7 +729,7 @@ class TestRegexSetReferences:
             "lists": [
                 {"name": "bad-paths", "kind": "regex", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -756,7 +756,7 @@ class TestRegexSetReferences:
             "lists": [
                 {"name": "bad-paths", "kind": "regex", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -782,7 +782,7 @@ class TestRegexSetReferences:
             "lists": [
                 {"name": "blocklist", "kind": "ip", "items": []},
             ],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -805,7 +805,7 @@ class TestRegexSetReferences:
         """Without a lists section at all, WA327 does not fire."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -843,7 +843,7 @@ class TestRegexSetReferences:
         }
         rules_data = {
             "lists": [{"name": "bad-paths", "kind": "regex", "items": []}],
-            "aws_waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
+            "aws.waf_custom_rules": [self._make_rule("r1", 1, "m1", stmt)],
         }
         aws_lint(rules_data, ctx)
         wa327 = [r for r in ctx.results if r.rule_id == "WA327"]
@@ -855,7 +855,7 @@ class TestRegexSetReferences:
         ctx = LintContext()
         rules_data = {
             "lists": [{"name": "bad-paths", "kind": "regex", "items": []}],
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._make_rule(
                     "r1",
                     1,
@@ -931,7 +931,7 @@ class TestListItemCounts:
     def test_wa158_no_lists_section_no_warn(self):
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [],
+            "aws.waf_custom_rules": [],
         }
         aws_lint(rules_data, ctx)
         wa158 = [r for r in ctx.results if r.rule_id == "WA158"]
@@ -1282,7 +1282,7 @@ class TestRuleCount:
         """10 rules should not trigger WA601."""
         ctx = LintContext()
         rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(10)]
-        rules_data = {"aws_waf_custom_rules": rules}
+        rules_data = {"aws.waf_custom_rules": rules}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
@@ -1291,7 +1291,7 @@ class TestRuleCount:
         """Exactly 100 rules should NOT trigger WA601."""
         ctx = LintContext()
         rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(100)]
-        rules_data = {"aws_waf_custom_rules": rules}
+        rules_data = {"aws.waf_custom_rules": rules}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
@@ -1300,7 +1300,7 @@ class TestRuleCount:
         """101 rules should trigger WA601."""
         ctx = LintContext()
         rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(101)]
-        rules_data = {"aws_waf_custom_rules": rules}
+        rules_data = {"aws.waf_custom_rules": rules}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 1
@@ -1311,10 +1311,10 @@ class TestRuleCount:
         """Filtered-out phases must not count, even when the finding would
         attribute to a filtered-in phase (the filtered-in phase comes first,
         so a counting regression can't hide behind result-phase filtering)."""
-        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        ctx = LintContext(phase_filter=["aws.waf_custom_rules"])
         rules_a = [self._make_rule(f"a{i}", i, f"ma{i}") for i in range(60)]
         rules_b = [self._make_rule(f"b{i}", i, f"mb{i}") for i in range(60)]
-        rules_data = {"aws_waf_custom_rules": rules_a, "aws_waf_rate_rules": rules_b}
+        rules_data = {"aws.waf_custom_rules": rules_a, "aws.waf_rate_rules": rules_b}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         # Only the 60 filtered-in rules count — under the limit, no warning.
@@ -1326,8 +1326,8 @@ class TestRuleCount:
         rules_a = [self._make_rule(f"a{i}", i, f"ma{i}") for i in range(60)]
         rules_b = [self._make_rule(f"b{i}", i, f"mb{i}") for i in range(50)]
         rules_data = {
-            "aws_waf_custom_rules": rules_a,
-            "aws_waf_rate_rules": rules_b,
+            "aws.waf_custom_rules": rules_a,
+            "aws.waf_rate_rules": rules_b,
         }
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
@@ -1336,10 +1336,10 @@ class TestRuleCount:
 
     def test_wa601_respects_phase_filter(self):
         """WA601 should respect ctx.phase_filter."""
-        ctx = LintContext(phase_filter=["aws_waf_custom_rules"])
+        ctx = LintContext(phase_filter=["aws.waf_custom_rules"])
         # Put 101 rules in rate_rules (filtered out)
         rules = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(101)]
-        rules_data = {"aws_waf_rate_rules": rules}
+        rules_data = {"aws.waf_rate_rules": rules}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
@@ -1365,7 +1365,7 @@ class TestRuleCount:
         rules: list = [self._make_rule(f"r{i}", i, f"m{i}") for i in range(99)]
         # Add non-dict entries that should be ignored by the counter
         rules.extend(["string-entry", 42, None])
-        rules_data = {"aws_waf_custom_rules": rules}
+        rules_data = {"aws.waf_custom_rules": rules}
         _check_rule_count(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
@@ -1373,7 +1373,7 @@ class TestRuleCount:
     def test_wa601_non_list_phase_skipped(self):
         """Phase with non-list value should be silently skipped."""
         ctx = LintContext()
-        rules_data = {"aws_waf_custom_rules": "not-a-list"}
+        rules_data = {"aws.waf_custom_rules": "not-a-list"}
         aws_lint(rules_data, ctx)
         wa601 = [r for r in ctx.results if r.rule_id == "WA601"]
         assert len(wa601) == 0
@@ -1417,7 +1417,7 @@ class TestWA603Unreachable:
     def test_wa603_unreachable_after_catch_all_block(self):
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._geo_catch_all("catch-all", priority=0),
                 self._normal_rule("after", priority=1),
             ]
@@ -1431,7 +1431,7 @@ class TestWA603Unreachable:
         """Count doesn't terminate — subsequent rules should NOT be flagged."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._geo_catch_all("counter", action="Count", priority=0),
                 self._normal_rule("after", priority=1),
             ]
@@ -1444,7 +1444,7 @@ class TestWA603Unreachable:
         """A rule with few country codes is not catch-all."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._normal_rule("first", priority=0),
                 self._normal_rule("second", priority=1),
             ]
@@ -1459,7 +1459,7 @@ class TestWA603Unreachable:
         catch_all = self._geo_catch_all("disabled", priority=0)
         catch_all["enabled"] = False
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 catch_all,
                 self._normal_rule("after", priority=1),
             ]
@@ -1472,7 +1472,7 @@ class TestWA603Unreachable:
         """Multiple rules after catch-all should all be flagged."""
         ctx = LintContext()
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 self._geo_catch_all("catch-all", priority=0),
                 self._normal_rule("after1", priority=1),
                 self._normal_rule("after2", priority=2),
@@ -1503,7 +1503,7 @@ class TestCrossRuleIPSetOverlap:
 
     @staticmethod
     def _data(rules: list, lists: list) -> dict:
-        return {"aws_waf_custom_rules": rules, "lists": lists}
+        return {"aws.waf_custom_rules": rules, "lists": lists}
 
     def test_fires_across_different_sets(self):
         ctx = LintContext()

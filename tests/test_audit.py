@@ -12,7 +12,7 @@ class TestAWSExtractIPs:
     def test_extracts_list_refs_from_ipset_reference(self):
         """IPSet name extracted from ARN and placed in list_refs."""
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "block-bad",
                     "Action": {"Block": {}},
@@ -24,7 +24,7 @@ class TestAWSExtractIPs:
                 }
             ],
         }
-        results = _extract_ips(rules_data, "aws_waf_custom_rules")
+        results = _extract_ips(rules_data, "aws.waf_custom_rules")
         assert len(results) == 1
         assert results[0].ref == "block-bad"
         assert results[0].action == "Block"
@@ -34,7 +34,7 @@ class TestAWSExtractIPs:
     def test_multiple_ipset_refs(self):
         """Multiple IPSet references in nested statements."""
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "multi-ref",
                     "Action": {"Block": {}},
@@ -61,7 +61,7 @@ class TestAWSExtractIPs:
                 }
             ],
         }
-        results = _extract_ips(rules_data, "aws_waf_custom_rules")
+        results = _extract_ips(rules_data, "aws.waf_custom_rules")
         assert len(results) == 1
         assert set(results[0].list_refs) == {"set-a", "set-b"}
 
@@ -78,13 +78,13 @@ class TestAWSExtractIPs:
         assert _extract_ips(rules_data, "waf_custom_rules") == []
 
     def test_no_statement(self):
-        rules_data = {"aws_waf_custom_rules": [{"ref": "r1", "Action": {"Block": {}}}]}
-        assert _extract_ips(rules_data, "aws_waf_custom_rules") == []
+        rules_data = {"aws.waf_custom_rules": [{"ref": "r1", "Action": {"Block": {}}}]}
+        assert _extract_ips(rules_data, "aws.waf_custom_rules") == []
 
     def test_no_ipset_in_statement(self):
         """Statement without IPSetReferenceStatement returns nothing."""
         rules_data = {
-            "aws_waf_custom_rules": [
+            "aws.waf_custom_rules": [
                 {
                     "ref": "r1",
                     "Action": {"Block": {}},
@@ -92,4 +92,4 @@ class TestAWSExtractIPs:
                 }
             ],
         }
-        assert _extract_ips(rules_data, "aws_waf_custom_rules") == []
+        assert _extract_ips(rules_data, "aws.waf_custom_rules") == []

@@ -36,31 +36,31 @@ def _rule(**overrides):
 # ---------------------------------------------------------------------------
 class TestWA023RuleEntryNotDict:
     def test_string_entry(self):
-        results = validate_rules(["not-a-dict"], phase="aws_waf_custom_rules")
+        results = validate_rules(["not-a-dict"], phase="aws.waf_custom_rules")
         assert_lint(results, "WA023")
 
     def test_int_entry(self):
-        results = validate_rules([42], phase="aws_waf_custom_rules")
+        results = validate_rules([42], phase="aws.waf_custom_rules")
         assert_lint(results, "WA023")
 
     def test_none_entry(self):
-        results = validate_rules([None], phase="aws_waf_custom_rules")
+        results = validate_rules([None], phase="aws.waf_custom_rules")
         assert_lint(results, "WA023")
 
     def test_list_entry(self):
-        results = validate_rules([[1, 2]], phase="aws_waf_custom_rules")
+        results = validate_rules([[1, 2]], phase="aws.waf_custom_rules")
         assert_lint(results, "WA023")
 
     def test_mixed_valid_and_invalid(self):
         """Non-dict entries produce WA023; valid dicts are still checked."""
-        results = validate_rules(["bad", _rule()], phase="aws_waf_custom_rules")
+        results = validate_rules(["bad", _rule()], phase="aws.waf_custom_rules")
         assert_lint(results, "WA023")
         # The valid rule should NOT produce WA023
         assert_lint(results, "WA023", count=1)
 
     def test_non_dict_skips_remaining_checks(self):
         """A non-dict entry should not trigger WA001/WA002/etc."""
-        results = validate_rules(["bad"], phase="aws_waf_custom_rules")
+        results = validate_rules(["bad"], phase="aws.waf_custom_rules")
         ids = [r.rule_id for r in results]
         assert "WA023" in ids
         assert "WA001" not in ids
@@ -80,8 +80,8 @@ class TestValidRules:
     def test_phase_passed_through(self):
         r = _rule()
         del r["ref"]
-        results = validate_rules([r], phase="aws_waf_custom_rules")
-        assert results[0].phase == "aws_waf_custom_rules"
+        results = validate_rules([r], phase="aws.waf_custom_rules")
+        assert results[0].phase == "aws.waf_custom_rules"
 
     def test_returns_lint_result_instances(self):
         r = _rule()
@@ -4806,7 +4806,7 @@ class TestRuleOverlap:
         # Since validate_rules() only checks rule structure, not IP sets,
         # this test documents the expected behavior when both rules are present.
         # In practice, both would fire with full IP set information available.
-        results = validate_rules([rule1, rule2], phase="aws_waf_custom_rules")
+        results = validate_rules([rule1, rule2], phase="aws.waf_custom_rules")
         # Both rules should validate without errors (no IP set data provided)
         assert all(r.rule_id not in ["WA164", "WA167"] for r in results)
 
@@ -4830,7 +4830,7 @@ class TestRuleOverlap:
                 "RegexString": "^.+$",
             }
         }
-        results1 = validate_rules([_rule(Statement=stmt1)], phase="aws_waf_custom_rules")
+        results1 = validate_rules([_rule(Statement=stmt1)], phase="aws.waf_custom_rules")
         rule_ids1 = {r.rule_id for r in results1}
         assert "WA344" in rule_ids1, f"WA344 not found for ^.+$; got {rule_ids1}"
         assert "WA345" not in rule_ids1, f"WA345 should NOT fire for ^.+$; got {rule_ids1}"
@@ -4842,7 +4842,7 @@ class TestRuleOverlap:
                 "RegexString": "^foo$",
             }
         }
-        results2 = validate_rules([_rule(Statement=stmt2)], phase="aws_waf_custom_rules")
+        results2 = validate_rules([_rule(Statement=stmt2)], phase="aws.waf_custom_rules")
         rule_ids2 = {r.rule_id for r in results2}
         assert "WA344" not in rule_ids2, f"WA344 should NOT fire for ^foo$; got {rule_ids2}"
         assert "WA345" in rule_ids2, f"WA345 not found for ^foo$; got {rule_ids2}"

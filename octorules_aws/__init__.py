@@ -17,19 +17,19 @@ _AWS_PHASES = AWS_PHASES
 register_phases(_AWS_PHASES)
 register_api_fields("rule", {"OverrideAction"})
 register_non_phase_key("custom_rulesets")
-register_non_phase_key("aws_waf_settings")
+register_non_phase_key("aws.waf_settings")
 
 # Register nested namespace: aws: { waf_custom_rules: ..., waf_settings: ... }
 register_namespace(
     "aws",
-    {
-        "waf_custom_rules": "aws_waf_custom_rules",
-        "waf_rate_rules": "aws_waf_rate_rules",
-        "waf_managed_rules": "aws_waf_managed_rules",
-        "waf_rule_group_rules": "aws_waf_rule_group_rules",
-        "custom_rulesets": "custom_rulesets",
-        "waf_settings": "aws_waf_settings",
-    },
+    (
+        "waf_custom_rules",
+        "waf_rate_rules",
+        "waf_managed_rules",
+        "waf_rule_group_rules",
+        "custom_rulesets",
+        "waf_settings",
+    ),
 )
 
 from octorules_aws.linter import register_aws_linter  # noqa: E402
