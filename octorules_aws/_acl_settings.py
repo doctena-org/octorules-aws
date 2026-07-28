@@ -269,7 +269,6 @@ class AclSettingsExtension(ProviderExtension):
     """Web ACL-level settings."""
 
     section = "aws.waf_settings"
-    formatter = AclSettingsFormatter()
 
     def prefetch(self, desired, scope, provider):
         return _prefetch_acl_settings(desired, scope, provider)
@@ -282,9 +281,6 @@ class AclSettingsExtension(ProviderExtension):
 
     def dump(self, scope, provider):
         return _dump_acl_settings(scope, provider)
-
-    def validate(self, desired, zone_name, errors, lines):
-        return _validate_acl_settings(desired, zone_name, errors, lines)
 
 
 # ---------------------------------------------------------------------------
