@@ -1749,3 +1749,36 @@ class TestListItemsDictShape:
         }
         aws_lint(rules_data, ctx)
         assert not [r for r in ctx.results if r.rule_id in ("WA158", "WA162", "WA163", "WA164")]
+
+
+class TestRegexPatternEntryLength:
+    """WA168: quotas page, "Maximum number of characters in each regex
+    pattern | 200".  Distinct from the 512 an inline RegexString gets from
+    the API model (WA308)."""
+
+    def test_wa168_200_chars_ok(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "rx", "kind": "regex", "items": ["a" * 200]}],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA168"] == []
+
+    def test_wa168_201_chars_errors(self):
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "rx", "kind": "regex", "items": ["a" * 201]}],
+        }
+        aws_lint(rules_data, ctx)
+        hits = [r for r in ctx.results if r.rule_id == "WA168"]
+        assert len(hits) == 1
+        assert "201" in hits[0].message
+
+    def test_wa168_ip_lists_exempt(self):
+        """The 200-char bound is regex-set-specific."""
+        ctx = LintContext()
+        rules_data = {
+            "lists": [{"name": "ips", "kind": "ip", "items": ["1.2.3.4/32" * 30]}],
+        }
+        aws_lint(rules_data, ctx)
+        assert [r for r in ctx.results if r.rule_id == "WA168"] == []

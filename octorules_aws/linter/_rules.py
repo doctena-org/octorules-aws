@@ -99,7 +99,7 @@ WA324 = RuleMeta(
 WA325 = RuleMeta(
     "WA325",
     "statement",
-    "FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns",
+    "FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 199 patterns",
     Severity.ERROR,
 )
 
@@ -129,7 +129,7 @@ WA160 = RuleMeta(
 WA161 = RuleMeta(
     "WA161",
     "statement",
-    "Deprecated ExcludedRules — use RuleActionOverrides instead",
+    "ExcludedRules — AWS directs to RuleActionOverrides instead",
     Severity.INFO,
 )
 
@@ -166,6 +166,12 @@ WA158 = RuleMeta("WA158", "cross_rule", "IP set exceeds 10,000 address limit", S
 # WA165: Regex pattern set item count limit
 WA165 = RuleMeta(
     "WA165", "cross_rule", "Regex pattern set exceeds 10-pattern limit", Severity.ERROR
+)
+WA168 = RuleMeta(
+    "WA168",
+    "cross_rule",
+    "Regex pattern-set entry exceeds 200 characters",
+    Severity.ERROR,
 )
 
 # WA162: Reserved/bogon IP in IP set
@@ -220,7 +226,7 @@ WA600 = RuleMeta("WA600", "best_practice", "Rule is disabled (enabled: false)", 
 WA601 = RuleMeta(
     "WA601",
     "best_practice",
-    "Total rule count may exceed default Web ACL limit of 100",
+    "Total rule count above 100 (octorules guidance; AWS caps WCUs, see WA340)",
     Severity.WARNING,
 )
 WA602 = RuleMeta(

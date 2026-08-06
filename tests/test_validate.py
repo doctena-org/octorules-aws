@@ -2706,22 +2706,25 @@ class TestMatchPatternLimit:
             }
         }
 
-    def test_wa325_headers_included_5_ok(self):
-        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e"]}
+    # AWS API Reference (HeaderMatchPattern / CookieMatchPattern): "Array
+    # Members: Minimum number of 1 item. Maximum number of 199 items."  The
+    # old tests asserted a 5-entry cap that AWS publishes nowhere.
+    def test_wa325_headers_included_199_ok(self):
+        mp = {"IncludedHeaders": [f"h{i}" for i in range(199)]}
         stmt = self._byte_match_with_headers(mp)
         assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA325")
 
     def test_wa325_headers_included_exceeds(self):
-        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        mp = {"IncludedHeaders": [f"h{i}" for i in range(200)]}
         stmt = self._byte_match_with_headers(mp)
         results = validate_rules([_rule(Statement=stmt)])
         assert_lint(results, "WA325")
         wa325 = [r for r in results if r.rule_id == "WA325"]
         assert "IncludedHeaders" in wa325[0].message
-        assert "6" in wa325[0].message
+        assert "200" in wa325[0].message
 
     def test_wa325_headers_excluded_exceeds(self):
-        mp = {"ExcludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        mp = {"ExcludedHeaders": [f"h{i}" for i in range(200)]}
         stmt = self._byte_match_with_headers(mp)
         results = validate_rules([_rule(Statement=stmt)])
         assert_lint(results, "WA325")
@@ -2729,7 +2732,7 @@ class TestMatchPatternLimit:
         assert "ExcludedHeaders" in wa325[0].message
 
     def test_wa325_cookies_included_exceeds(self):
-        mp = {"IncludedCookies": ["a", "b", "c", "d", "e", "f"]}
+        mp = {"IncludedCookies": [f"c{i}" for i in range(200)]}
         stmt = self._byte_match_with_cookies(mp)
         results = validate_rules([_rule(Statement=stmt)])
         assert_lint(results, "WA325")
@@ -2737,7 +2740,7 @@ class TestMatchPatternLimit:
         assert "IncludedCookies" in wa325[0].message
 
     def test_wa325_cookies_excluded_exceeds(self):
-        mp = {"ExcludedCookies": ["a", "b", "c", "d", "e", "f"]}
+        mp = {"ExcludedCookies": [f"c{i}" for i in range(200)]}
         stmt = self._byte_match_with_cookies(mp)
         results = validate_rules([_rule(Statement=stmt)])
         assert_lint(results, "WA325")
@@ -2755,7 +2758,7 @@ class TestMatchPatternLimit:
         assert_no_lint(validate_rules([_rule(Statement=stmt)]), "WA325")
 
     def test_wa325_field_is_set(self):
-        mp = {"IncludedHeaders": ["a", "b", "c", "d", "e", "f"]}
+        mp = {"IncludedHeaders": [f"h{i}" for i in range(200)]}
         stmt = self._byte_match_with_headers(mp)
         results = validate_rules([_rule(Statement=stmt)])
         wa325 = [r for r in results if r.rule_id == "WA325"]

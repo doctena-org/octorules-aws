@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **95 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **96 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -74,11 +74,12 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA158](#wa158--ip-set-exceeds-10000-address-limit) | IP set exceeds 10,000 address limit | WARNING |
 | [WA159](#wa159--ruleactionoverrides-entry-missing-name-or-actiontouse) | RuleActionOverrides entry missing Name or ActionToUse | ERROR |
 | [WA160](#wa160--ruleactionoverrides-actiontouse-has-invalid-action) | RuleActionOverrides ActionToUse has invalid action | ERROR |
-| [WA161](#wa161--deprecated-excludedrules--use-ruleactionoverrides-instead) | Deprecated ExcludedRules — use RuleActionOverrides instead | INFO |
+| [WA161](#wa161--excludedrules--aws-directs-to-ruleactionoverrides-instead) | ExcludedRules — AWS directs to RuleActionOverrides instead | INFO |
 | [WA162](#wa162--reservedbogon-ip-in-ip-set) | Reserved/bogon IP in IP set | WARNING |
 | [WA163](#wa163--catch-all-cidr-in-ip-set) | Catch-all CIDR (0.0.0.0/0 or ::/0) in IP set | WARNING |
 | [WA164](#wa164--overlapping-ipcidr-entries-in-ip-set) | Overlapping IP/CIDR entries in IP set | WARNING |
 | [WA165](#wa165--regex-pattern-set-exceeds-10-pattern-limit) | Regex pattern set exceeds 10-pattern limit | ERROR |
+| [WA168](#wa168--regex-pattern-set-entry-exceeds-200-characters) | Regex pattern-set entry exceeds 200 characters | ERROR |
 | [WA166](#wa166--cidr-has-host-bits-set-in-ip-set) | CIDR has host bits set in IP set | WARNING |
 | [WA167](#wa167--overlappingduplicate-cidr-across-rules-in-same-phase) | Overlapping/duplicate CIDR across rules in same phase | WARNING |
 | [WA200](#wa200--invalid-action-type) | Invalid Action type | ERROR |
@@ -108,7 +109,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA322](#wa322--statement-entry-in-andorstatement-is-not-a-dict) | Statement entry in And/OrStatement is not a dict | ERROR |
 | [WA323](#wa323--geomatchstatement-exceeds-50-country-codes) | GeoMatchStatement exceeds 50 country codes | ERROR |
 | [WA324](#wa324--ratebasedstatementcustomkeys-exceeds-maximum-of-5) | RateBasedStatement.CustomKeys exceeds maximum of 5 | ERROR |
-| [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-5-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns | ERROR |
+| [WA325](#wa325--fieldtomatch-headerscookies-matchpattern-exceeds-maximum-of-199-patterns) | FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 199 patterns | ERROR |
 | [WA328](#wa328--bytematchstatement-searchstring-is-empty) | ByteMatchStatement SearchString is empty | ERROR |
 | [WA337](#wa337--invalid-custom-key-type-in-customkeys) | Invalid custom key type in CustomKeys | ERROR |
 | [WA338](#wa338--invalid-oversizehandling-value) | Invalid OversizeHandling value | ERROR |
@@ -145,7 +146,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA347](#wa347--uripath-searchstring-should-start-with) | UriPath SearchString should start with / | WARNING |
 | [WA348](#wa348--contradictory-bytematch-in-andstatement) | Contradictory ByteMatch in AndStatement | WARNING |
 | [WA600](#wa600--rule-is-disabled-enabled-false) | Rule is disabled (enabled: false) | INFO |
-| [WA601](#wa601--total-rule-count-may-exceed-default-web-acl-limit-of-100) | Total rule count may exceed default Web ACL limit of 100 | WARNING |
+| [WA601](#wa601--total-rule-count-above-100-octorules-guidance) | Total rule count above 100 (octorules guidance) | WARNING |
 | [WA602](#wa602--count-action-on-managedrulegroup-logs-all-traffic) | Count action on ManagedRuleGroup logs all traffic | INFO |
 | [WA603](#wa603--rule-likely-unreachable-after-always-true-terminating-rule) | Rule likely unreachable after always-true terminating rule | WARNING |
 
@@ -161,7 +162,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | WA004–WA005, WA200–WA201, WA350–WA357 | Action | 12 |
 | WA400–WA402, WA500–WA501 | Visibility | 5 |
 | WA156–WA157, WA159–WA161, WA300–WA325, WA328, WA330–WA332, WA334–WA339, WA341–WA348 | Statement | 49 |
-| WA158, WA162–WA167, WA326–WA327, WA340, WA520, WA603 | Cross-rule | 12 |
+| WA158, WA162–WA168, WA326–WA327, WA340, WA520, WA603 | Cross-rule | 13 |
 | WA600–WA602 | Best practice | 3 |
 
 ---
@@ -788,7 +789,7 @@ The `SearchString` in a `ByteMatchStatement` must not exceed 200 bytes when enco
 
 **Severity:** ERROR
 
-The `RegexString` in a `RegexMatchStatement` must not exceed 512 bytes when encoded as UTF-8. AWS WAF rejects longer patterns at the API level.
+The `RegexString` in a `RegexMatchStatement` must not exceed 512 bytes when encoded as UTF-8 (the API model's `RegexPatternString` bound). Entries inside a regex pattern set have a different, tighter bound — 200 characters, checked by WA168.
 
 **Triggers on:**
 
@@ -1237,11 +1238,11 @@ The `CustomKeys` list in a `RateBasedStatement` must not exceed 5 entries. AWS W
 
 **Fix:** Reduce the `CustomKeys` list to at most 5 entries.
 
-### WA325 -- FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 5 patterns
+### WA325 -- FieldToMatch Headers/Cookies MatchPattern exceeds maximum of 199 patterns
 
 **Severity:** ERROR
 
-The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 entries in any of its inclusion/exclusion lists (`IncludedHeaders`, `ExcludedHeaders`, `IncludedCookies`, `ExcludedCookies`). AWS WAF enforces this limit at the API level.
+The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 199 entries in any of its inclusion/exclusion lists (`IncludedHeaders`, `ExcludedHeaders`, `IncludedCookies`, `ExcludedCookies`). AWS API Reference for `HeaderMatchPattern` and `CookieMatchPattern`: "Array Members: Minimum number of 1 item. Maximum number of 199 items."
 
 **Triggers on:**
 
@@ -1249,12 +1250,12 @@ The `MatchPattern` in a `Headers` or `Cookies` `FieldToMatch` must not exceed 5 
         FieldToMatch:
           Headers:
             MatchPattern:
-              IncludedHeaders: ["a", "b", "c", "d", "e", "f"]    # 6 > 5
+              IncludedHeaders: [h0, h1, "…", h199]    # 200 > 199
             MatchScope: ALL
             OversizeHandling: MATCH
 ```
 
-**Fix:** Reduce the list to 5 or fewer patterns.
+**Fix:** Reduce the list to 199 or fewer patterns.
 
 ### WA328 -- ByteMatchStatement SearchString is empty
 
@@ -1581,7 +1582,7 @@ Or:
               Count: {}
 ```
 
-### WA161 -- Deprecated ExcludedRules -- use RuleActionOverrides instead
+### WA161 -- ExcludedRules -- AWS directs to RuleActionOverrides instead
 
 **Severity:** INFO
 
@@ -2061,6 +2062,25 @@ aws:
 
 **Fix:** Split the patterns across multiple regex pattern sets (each used by its own rule), or combine them into a single more-permissive regex (e.g. `^/(admin|wp-admin|phpmyadmin|…)`).
 
+
+### WA168 -- Regex pattern-set entry exceeds 200 characters
+
+**Severity:** ERROR
+
+Each pattern inside a regex pattern set (`kind: regex` list) is capped at 200 characters — AWS WAF quotas: "Maximum number of characters in each regex pattern | 200". An inline `RegexMatchStatement.RegexString` has a different bound (512, checked by WA308).
+
+**Triggers on:**
+
+```yaml
+lists:
+  - name: blocked-paths
+    kind: regex
+    items:
+      - "<a pattern longer than 200 characters>"
+```
+
+**Fix:** Shorten the pattern, or split it across several entries.
+
 ### WA166 -- CIDR has host bits set in IP set
 
 **Severity:** WARNING
@@ -2480,15 +2500,15 @@ aws:
 
 **Fix:** Remove the rule entirely if it is no longer needed, or set `enabled: true` (or remove the `enabled` key) to re-enable it.
 
-### WA601 -- Total rule count may exceed default Web ACL limit of 100
+### WA601 -- Total rule count above 100 (octorules guidance)
 
 **Severity:** WARNING
 
-The total number of rules across all AWS WAF phases in this zone exceeds 100, which is the default Web ACL rule limit. AWS WAF enforces this limit at the account level; deployments that exceed it will be rejected by the API.
+The total number of rules across all AWS WAF phases in this zone exceeds 100. This threshold is octorules guidance, not an AWS limit — AWS bounds a WAFv2 web ACL by WCU capacity (5,000 WCUs, estimated by WA340), never by rule count. A three-digit rule count is usually worth a review.
 
 **Triggers on:** a zone whose combined custom rules across all phases total more than 100.
 
-**Fix:** Reduce the number of rules, or request a limit increase from AWS Support (the limit can be raised up to 500 rules per Web ACL).
+**Fix:** Review whether the zone needs this many rules; WA340's WCU estimate is the binding constraint.
 
 ### WA602 -- Count action on ManagedRuleGroup logs all traffic
 

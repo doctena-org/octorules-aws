@@ -37,6 +37,7 @@ _PLUGIN_RULE_IDS: frozenset[str] = frozenset(
         "WA163",
         "WA164",
         "WA165",
+        "WA168",
         "WA166",
         "WA167",
         "WA326",
@@ -285,15 +286,17 @@ def _check_regex_set_references(rules_data: dict[str, Any], ctx: LintContext) ->
                     )
 
 
+# octorules guidance, not an AWS limit: WAFv2 bounds a web ACL by WCU
+# capacity (5,000 -- estimated by WA340), never by rule count.  A three-digit
+# rule count is still worth a look, so the heuristic stays, labelled as ours.
 _DEFAULT_RULE_LIMIT = 100
 
 
 def _check_rule_count(rules_data: dict[str, Any], ctx: LintContext) -> None:
-    """WA601: Warn if the total rule count across AWS phases exceeds 100.
+    """WA601: octorules guidance when the total rule count passes 100.
 
-    AWS Web ACLs have a default limit of 100 rules (extendable to 500 with
-    AWS support).  This counts all rules across all AWS phases and warns
-    when the total may exceed the default limit.
+    Counts all rules across all AWS phases.  The real AWS bound is WCU
+    capacity, checked by WA340; this is a plain-count sanity signal.
     """
     total = 0
     first_phase = ""
@@ -309,8 +312,9 @@ def _check_rule_count(rules_data: dict[str, Any], ctx: LintContext) -> None:
                 rule_id="WA601",
                 severity=Severity.WARNING,
                 message=(
-                    f"Total rule count ({total}) may exceed"
-                    f" the default Web ACL limit of {_DEFAULT_RULE_LIMIT}"
+                    f"Total rule count is {total} (octorules guidance threshold:"
+                    f" {_DEFAULT_RULE_LIMIT}; AWS bounds a web ACL by WCU capacity"
+                    " — see WA340)"
                 ),
                 phase=first_phase,
             )
@@ -322,6 +326,7 @@ _MAX_IPSET_ITEMS = 10_000
 # adjustable via Service Quotas).  See:
 # https://docs.aws.amazon.com/waf/latest/developerguide/limits.html
 _MAX_REGEX_PATTERNS = 10
+_MAX_REGEX_PATTERN_CHARS = 200
 
 
 def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> None:
@@ -345,6 +350,23 @@ def _check_list_item_counts(rules_data: dict[str, Any], ctx: LintContext) -> Non
         kind = lst.get("kind", "ip")
         name = lst.get("name", "<unknown>")
         if kind == "regex":
+            # WA168: quotas page, "Maximum number of characters in each regex
+            # pattern | 200".  Distinct from the 512 an inline
+            # RegexMatchStatement.RegexString gets from the API model (WA308).
+            for item in items:
+                val = _item_value(item)
+                if isinstance(val, str) and len(val) > _MAX_REGEX_PATTERN_CHARS:
+                    ctx.add(
+                        LintResult(
+                            rule_id="WA168",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"Regex pattern set '{name}' entry is"
+                                f" {len(val)} characters (AWS maximum:"
+                                f" {_MAX_REGEX_PATTERN_CHARS} per pattern)"
+                            ),
+                        )
+                    )
             # WA165: regex pattern set count cap.
             if len(items) > _MAX_REGEX_PATTERNS:
                 ctx.add(

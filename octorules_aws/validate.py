@@ -163,7 +163,9 @@ _VALID_CUSTOM_KEY_TYPES = frozenset(
 _VALID_OVERSIZE_HANDLING = frozenset({"CONTINUE", "MATCH", "NO_MATCH"})
 _VALID_FALLBACK_BEHAVIORS = frozenset({"MATCH", "NO_MATCH"})
 _MAX_TEXT_TRANSFORMATIONS = 10
-_MAX_MATCH_PATTERN_ENTRIES = 5
+# AWS API Reference, HeaderMatchPattern and CookieMatchPattern alike:
+# "Array Members: Minimum number of 1 item. Maximum number of 199 items."
+_MAX_MATCH_PATTERN_ENTRIES = 199
 
 # --- WA335/WA336: JsonBody enum values ----------------------------------------
 _VALID_MATCH_SCOPES = frozenset({"ALL", "KEY", "VALUE"})
@@ -274,7 +276,11 @@ _VALID_TEXT_TRANSFORM_TYPES = frozenset(
 
 # --- WA307/WA308: Size limits -----------------------------------------------
 _MAX_SEARCH_STRING_BYTES = 200  # AWS API: ByteMatchStatement.SearchString max 200 bytes
-_MAX_REGEX_STRING_BYTES = 512  # AWS API: RegexMatchStatement.RegexString max 512 chars
+# Two different AWS bounds govern regexes.  Inline RegexMatchStatement.RegexString
+# takes the API model's RegexPatternString max of 512 (checked here, WA308);
+# entries in a regex pattern set take the quotas row "Maximum number of
+# characters in each regex pattern | 200" (checked by WA168 in the lists lint).
+_MAX_REGEX_STRING_BYTES = 512
 
 # --- WA354-WA357: CustomResponse limits ------------------------------------
 _MAX_CUSTOM_RESPONSE_BODY_BYTES = 4096
@@ -1379,7 +1385,7 @@ def _check_managed_rule_group_config(
             _result(
                 rule_id="WA161",
                 severity=Severity.INFO,
-                message="ExcludedRules is deprecated — use RuleActionOverrides instead",
+                message="ExcludedRules: AWS directs to RuleActionOverrides instead",
                 phase=phase,
                 ref=ref,
                 field=f"{_prefix}.ExcludedRules",
