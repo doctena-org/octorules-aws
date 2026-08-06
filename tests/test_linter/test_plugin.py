@@ -1765,9 +1765,10 @@ class TestRegexPatternEntryLength:
         assert [r for r in ctx.results if r.rule_id == "WA168"] == []
 
     def test_wa168_201_chars_errors(self):
+        """Canonical item shape (- pattern: "...") — _item_value extracts it."""
         ctx = LintContext()
         rules_data = {
-            "lists": [{"name": "rx", "kind": "regex", "items": ["a" * 201]}],
+            "lists": [{"name": "rx", "kind": "regex", "items": [{"pattern": "a" * 201}]}],
         }
         aws_lint(rules_data, ctx)
         hits = [r for r in ctx.results if r.rule_id == "WA168"]
