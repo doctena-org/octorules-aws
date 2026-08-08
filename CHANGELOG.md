@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **WA168** (ERROR): an entry in a regex pattern set longer than AWS's
+  200-character cap. Inline `RegexString` keeps its own 512-byte bound (WA308).
+
+### Changed
+- **WA601**'s 100-rule threshold is octorules guidance — WAFv2 bounds a web ACL
+  by WCU capacity (WA340), not rule count.
+- **WA161** no longer calls `ExcludedRules` deprecated; AWS's own wording is to
+  use `RuleActionOverrides` instead.
+
+### Fixed
+- **WA325** rejected more than 5 header/cookie match-pattern entries; AWS
+  accepts up to 199.
+
 ## [0.11.0] - 2026-07-26
 
 ### Added
