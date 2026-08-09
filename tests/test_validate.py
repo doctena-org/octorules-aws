@@ -216,6 +216,24 @@ class TestActionPresence:
 
 
 # ---------------------------------------------------------------------------
+# WA006  Missing Statement
+# ---------------------------------------------------------------------------
+class TestMissingStatement:
+    def test_wa006_missing_statement(self):
+        r = _rule()
+        del r["Statement"]
+        assert_lint(validate_rules([r]), "WA006")
+
+    def test_wa006_not_fired_when_statement_present(self):
+        assert_no_lint(validate_rules([_rule()]), "WA006")
+
+    def test_wa300_non_mapping_statement(self):
+        results = validate_rules([_rule(Statement="not-a-mapping")])
+        assert_lint(results, "WA300")
+        assert_no_lint(results, "WA006")
+
+
+# ---------------------------------------------------------------------------
 # WA200-WA201  Action type checks
 # ---------------------------------------------------------------------------
 class TestActions:
@@ -1642,6 +1660,28 @@ class TestCustomResponseCode:
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": "403"}}})
         assert_lint(validate_rules([r]), "WA353")
 
+
+# ---------------------------------------------------------------------------
+# WA358  CustomResponse missing ResponseCode
+# ---------------------------------------------------------------------------
+class TestCustomResponseMissingCode:
+    def test_wa358_missing_response_code(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"CustomResponseBodyKey": "body-key"}}})
+        assert_lint(validate_rules([r]), "WA358")
+
+    def test_wa358_not_fired_with_response_code(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
+        assert_no_lint(validate_rules([r]), "WA358")
+
+    def test_wa358_not_fired_without_custom_response(self):
+        assert_no_lint(validate_rules([_rule()]), "WA358")
+
+    def test_invalid_code_fires_wa353_not_wa358(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 999}}})
+        results = validate_rules([r])
+        assert_lint(results, "WA353")
+        assert_no_lint(results, "WA358")
+
     def test_wa353_code_bool(self):
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": True}}})
         assert_lint(validate_rules([r]), "WA353")
@@ -1966,15 +2006,16 @@ class TestEdgeCases:
         assert_no_lint(results, "WA004")
         assert_no_lint(results, "WA005")
 
-    def test_no_statement_key_no_crash(self):
+    def test_no_statement_key_fires_wa006_not_wa300(self):
         r = _rule()
         del r["Statement"]
         results = validate_rules([r])
         assert_no_lint(results, "WA300")
+        assert_lint(results, "WA006")
 
     def test_statement_not_dict(self):
         results = validate_rules([_rule(Statement="invalid")])
-        assert_no_lint(results, "WA300")
+        assert_lint(results, "WA300")
 
 
 # ---------------------------------------------------------------------------

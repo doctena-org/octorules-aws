@@ -15,6 +15,7 @@ WA402 = RuleMeta("WA402", "visibility", "MetricName exceeds 128 characters", Sev
 WA500 = RuleMeta("WA500", "visibility", "Duplicate MetricName across rules", Severity.ERROR)
 WA004 = RuleMeta("WA004", "action", "Rule missing both Action and OverrideAction", Severity.ERROR)
 WA005 = RuleMeta("WA005", "action", "Rule has both Action and OverrideAction", Severity.ERROR)
+WA006 = RuleMeta("WA006", "structure", "Rule missing 'Statement'", Severity.ERROR)
 WA200 = RuleMeta("WA200", "action", "Invalid Action type", Severity.ERROR)
 WA201 = RuleMeta("WA201", "action", "Invalid OverrideAction type", Severity.ERROR)
 WA300 = RuleMeta("WA300", "statement", "Statement must have exactly one type", Severity.ERROR)
@@ -154,6 +155,7 @@ WA354 = RuleMeta("WA354", "action", "CustomResponse body exceeds 4,096 bytes", S
 WA355 = RuleMeta("WA355", "action", "CustomResponse exceeds 10 custom headers", Severity.ERROR)
 WA356 = RuleMeta("WA356", "action", "CustomResponse header name invalid", Severity.ERROR)
 WA357 = RuleMeta("WA357", "action", "CustomResponseBodyKey is empty", Severity.WARNING)
+WA358 = RuleMeta("WA358", "action", "CustomResponse missing 'ResponseCode'", Severity.ERROR)
 
 # WA520: Cross-rule analysis
 WA520 = RuleMeta(

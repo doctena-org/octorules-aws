@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **WA006** (ERROR): rule missing `Statement` — required by the WAFv2 API,
+  previously passed lint silently. A non-mapping `Statement` now fires WA300.
+- **WA358** (ERROR): a Block `CustomResponse` missing `ResponseCode`, the one
+  member the service model requires.
+
 ## [0.12.0] - 2026-08-08
 
 ### Added

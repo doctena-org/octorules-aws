@@ -1,6 +1,6 @@
 # Lint Rule Reference
 
-`octorules lint` performs offline static analysis of your AWS WAF rules files. **96 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
+`octorules lint` performs offline static analysis of your AWS WAF rules files. **98 rules** with the `WA` prefix cover structure, actions, statements, visibility config, priority, cross-rule analysis, and best practices.
 
 These rules are registered automatically when `octorules-aws` is installed. They run alongside any core and other provider rules during `octorules lint`.
 
@@ -58,6 +58,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA003](#wa003--rule-missing-visibilityconfig) | Rule missing 'VisibilityConfig' | ERROR |
 | [WA004](#wa004--rule-missing-both-action-and-overrideaction) | Rule missing both Action and OverrideAction | ERROR |
 | [WA005](#wa005--rule-has-both-action-and-overrideaction) | Rule has both Action and OverrideAction | ERROR |
+| [WA006](#wa006--rule-missing-statement) | Rule missing 'Statement' | ERROR |
 | [WA010](#wa010--invalid-ref-format) | Invalid ref format | ERROR |
 | [WA020](#wa020--unknown-top-level-rule-field) | Unknown top-level rule field | WARNING |
 | [WA021](#wa021--actionoverrideaction-must-be-dict) | Action/OverrideAction must be dict | ERROR |
@@ -128,6 +129,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA355](#wa355--customresponse-exceeds-10-custom-headers) | CustomResponse exceeds 10 custom headers | ERROR |
 | [WA356](#wa356--customresponse-header-name-invalid) | CustomResponse header name invalid | ERROR |
 | [WA357](#wa357--customresponsebodykey-is-empty) | CustomResponseBodyKey is empty | WARNING |
+| [WA358](#wa358--customresponse-missing-responsecode) | CustomResponse missing 'ResponseCode' | ERROR |
 | [WA400](#wa400--visibilityconfig-missing-required-field) | VisibilityConfig missing required field | ERROR |
 | [WA401](#wa401--visibilityconfig-field-wrong-type) | VisibilityConfig field wrong type | ERROR |
 | [WA402](#wa402--metricname-exceeds-128-characters) | MetricName exceeds 128 characters | ERROR |
@@ -347,6 +349,33 @@ aws:
         ManagedRuleGroupStatement:
           VendorName: AWS
           Name: AWSManagedRulesCommonRuleSet
+```
+
+### WA006 -- Rule missing 'Statement'
+
+**Severity:** ERROR
+
+Every rule must have a `Statement` defining what traffic it matches — it is a required member of the WAFv2 `Rule` shape, and the API rejects rules without one.
+
+**Triggers on:**
+
+```yaml
+  - ref: block-bad-ips
+    Priority: 10
+    Action:
+      Block: {}
+    VisibilityConfig:
+      SampledRequestsEnabled: true
+      CloudWatchMetricsEnabled: true
+      MetricName: block-bad-ips
+```
+
+**Fix:** Add a `Statement`:
+
+```yaml
+    Statement:
+      IPSetReferenceStatement:
+        ARN: arn:aws:wafv2:us-east-1:123456789012:regional/ipset/bad-ips/abc123
 ```
 
 ### WA020 -- Unknown top-level rule field
@@ -2586,3 +2615,11 @@ A custom response header name contains characters not allowed by RFC 7230 (HTTP 
 The `CustomResponseBodyKey` field in a `CustomResponse` is present but empty. This key references a named response body defined in the Web ACL's `CustomResponseBodies` map. An empty key cannot match any defined body.
 
 **Fix:** Set the key to the name of a defined custom response body, or remove the field if no custom body is needed.
+
+### WA358 -- CustomResponse missing 'ResponseCode'
+
+**Severity:** ERROR
+
+A `Block` action's `CustomResponse` must set `ResponseCode` — it is the one member the WAFv2 service model requires. A `CustomResponse` with only headers or a body key is rejected by the API.
+
+**Fix:** Add `ResponseCode` (an integer in 200-599) to the `CustomResponse` block.

@@ -21,6 +21,7 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA003",
         "WA004",
         "WA005",
+        "WA006",
         "WA010",
         "WA020",
         "WA021",
@@ -92,6 +93,7 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA355",
         "WA356",
         "WA357",
+        "WA358",
         "WA400",
         "WA401",
         "WA402",
@@ -629,7 +631,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
 def _validate_custom_response_block(
     block: dict, results: list[LintResult], phase: str, ref: str
 ) -> None:
-    """WA353-WA357: validate a Block action's CustomResponse settings."""
+    """WA353-WA358: validate a Block action's CustomResponse settings."""
     cr = block.get("CustomResponse")
     if not isinstance(cr, dict):
         return
@@ -650,6 +652,18 @@ def _validate_custom_response_block(
                     field="Action.Block.CustomResponse.ResponseCode",
                 )
             )
+    else:
+        # WA358: ResponseCode is the one member the service model requires
+        results.append(
+            _result(
+                rule_id="WA358",
+                severity=Severity.ERROR,
+                message="CustomResponse missing 'ResponseCode'",
+                phase=phase,
+                ref=ref,
+                field="Action.Block.CustomResponse.ResponseCode",
+            )
+        )
 
     # WA354: CustomResponse body size limit
     body = cr.get("ResponseBody")
@@ -857,9 +871,30 @@ def _check_rule_labels(rule: dict, results: list[LintResult], phase: str, ref: s
 
 def _check_statement(rule: dict, results: list[LintResult], phase: str, ref: str) -> None:
     if "Statement" not in rule:
+        results.append(
+            _result(
+                rule_id="WA006",
+                severity=Severity.ERROR,
+                message="Rule missing 'Statement'",
+                phase=phase,
+                ref=ref,
+            )
+        )
         return
     stmt = rule["Statement"]
     if not isinstance(stmt, dict):
+        results.append(
+            _result(
+                rule_id="WA300",
+                severity=Severity.ERROR,
+                message=(
+                    f"Statement must be a mapping with exactly one type, got {type(stmt).__name__}"
+                ),
+                phase=phase,
+                ref=ref,
+                field="Statement",
+            )
+        )
         return
     _validate_statement(stmt, results, phase, ref)
 
