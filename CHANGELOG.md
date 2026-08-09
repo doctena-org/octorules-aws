@@ -5,13 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.12.0] - 2026-08-08
 
 ### Added
 - **WA168** (ERROR): an entry in a regex pattern set longer than AWS's
   200-character cap. Inline `RegexString` keeps its own 512-byte bound (WA308).
 
 ### Changed
+- Minimum `octorules` dependency: `>=0.33.0`.
 - **WA601**'s 100-rule threshold is octorules guidance — WAFv2 bounds a web ACL
   by WCU capacity (WA340), not rule count.
 - **WA161** no longer calls `ExcludedRules` deprecated; AWS's own wording is to
