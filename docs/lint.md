@@ -130,6 +130,7 @@ Suppressed findings are excluded from the report but counted in the summary line
 | [WA356](#wa356--customresponse-header-name-invalid) | CustomResponse header name invalid | ERROR |
 | [WA357](#wa357--customresponsebodykey-is-empty) | CustomResponseBodyKey is empty | WARNING |
 | [WA358](#wa358--customresponse-missing-responsecode) | CustomResponse missing 'ResponseCode' | ERROR |
+| [WA359](#wa359--customresponse-body-is-not-a-string) | CustomResponse body is not a string | ERROR |
 | [WA400](#wa400--visibilityconfig-missing-required-field) | VisibilityConfig missing required field | ERROR |
 | [WA401](#wa401--visibilityconfig-field-wrong-type) | VisibilityConfig field wrong type | ERROR |
 | [WA402](#wa402--metricname-exceeds-128-characters) | MetricName exceeds 128 characters | ERROR |
@@ -2623,3 +2624,14 @@ The `CustomResponseBodyKey` field in a `CustomResponse` is present but empty. Th
 A `Block` action's `CustomResponse` must set `ResponseCode` — it is the one member the WAFv2 service model requires. A `CustomResponse` with only headers or a body key is rejected by the API.
 
 **Fix:** Add `ResponseCode` (an integer in 200-599) to the `CustomResponse` block.
+
+### WA359 -- CustomResponse body is not a string
+
+**Severity:** ERROR
+
+`ResponseBody` is set to something other than a string — an integer or a
+mapping, for instance. WAFv2 requires a string, so the API rejects the rule.
+The size check (WA354) cannot catch this on its own: it would measure the
+value's text form and report a plausible byte count.
+
+**Fix:** Quote the value so it is a YAML string.

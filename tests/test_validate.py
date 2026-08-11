@@ -1714,6 +1714,30 @@ class TestCustomResponseBody:
         r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403}}})
         assert_no_lint(validate_rules([r]), "WA354")
 
+    def test_wa359_integer_body_rejected(self):
+        """str(123456789) measures 9 bytes and passes WA354; AWS rejects on type."""
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": 12345}}}
+        )
+        results = validate_rules([r])
+        assert_lint(results, "WA359")
+        assert_no_lint(results, "WA354")
+
+    def test_wa359_dict_body_rejected(self):
+        r = _rule(
+            Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": {"a": 1}}}}
+        )
+        assert_lint(validate_rules([r]), "WA359")
+
+    def test_wa359_message_names_the_type(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": 5}}})
+        hit = [x for x in validate_rules([r]) if x.rule_id == "WA359"]
+        assert hit and "int" in hit[0].message
+
+    def test_wa359_string_body_passes(self):
+        r = _rule(Action={"Block": {"CustomResponse": {"ResponseCode": 403, "ResponseBody": "ok"}}})
+        assert_no_lint(validate_rules([r]), "WA359")
+
     def test_wa354_multibyte_body(self):
         """Multi-byte characters push UTF-8 byte length over limit."""
         # U+00E9 is 2 bytes in UTF-8; 2731 chars * 2 = 5462 bytes > 4096

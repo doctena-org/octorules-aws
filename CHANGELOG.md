@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **WA359** (ERROR): a `CustomResponse.ResponseBody` that is not a string.
+  WA354 measured the value's text form, so a mistyped body passed linting
+  and was rejected by the API instead.
+
 ## [0.13.0] - 2026-08-10
 
 ### Added

@@ -150,12 +150,13 @@ WA334 = RuleMeta(
 WA335 = RuleMeta("WA335", "statement", "JsonBody.MatchScope invalid", Severity.ERROR)
 WA336 = RuleMeta("WA336", "statement", "JsonBody.InvalidFallbackBehavior invalid", Severity.ERROR)
 
-# WA354-WA357: CustomResponse parameter limits
+# WA354-WA359: CustomResponse parameter limits
 WA354 = RuleMeta("WA354", "action", "CustomResponse body exceeds 4,096 bytes", Severity.ERROR)
 WA355 = RuleMeta("WA355", "action", "CustomResponse exceeds 10 custom headers", Severity.ERROR)
 WA356 = RuleMeta("WA356", "action", "CustomResponse header name invalid", Severity.ERROR)
 WA357 = RuleMeta("WA357", "action", "CustomResponseBodyKey is empty", Severity.WARNING)
 WA358 = RuleMeta("WA358", "action", "CustomResponse missing 'ResponseCode'", Severity.ERROR)
+WA359 = RuleMeta("WA359", "action", "CustomResponse body is not a string", Severity.ERROR)
 
 # WA520: Cross-rule analysis
 WA520 = RuleMeta(

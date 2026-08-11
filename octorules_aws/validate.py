@@ -94,6 +94,7 @@ RULE_IDS: frozenset[str] = frozenset(
         "WA356",
         "WA357",
         "WA358",
+        "WA359",
         "WA400",
         "WA401",
         "WA402",
@@ -631,7 +632,7 @@ def _check_actions(rule: dict, results: list[LintResult], phase: str, ref: str) 
 def _validate_custom_response_block(
     block: dict, results: list[LintResult], phase: str, ref: str
 ) -> None:
-    """WA353-WA358: validate a Block action's CustomResponse settings."""
+    """WA353-WA359: validate a Block action's CustomResponse settings."""
     cr = block.get("CustomResponse")
     if not isinstance(cr, dict):
         return
@@ -665,10 +666,26 @@ def _validate_custom_response_block(
             )
         )
 
-    # WA354: CustomResponse body size limit
+    # WA359 then WA354: CustomResponse body type, then its size limit
     body = cr.get("ResponseBody")
-    if body is not None:
-        byte_len = len(str(body).encode("utf-8"))
+    if body is not None and not isinstance(body, str):
+        # str(body) measures an int or a dict just as happily and yields a
+        # plausible byte count, so a mistyped body passed the size check and
+        # was rejected by the API instead. Catching it is the linter's job.
+        results.append(
+            _result(
+                rule_id="WA359",
+                severity=Severity.ERROR,
+                message=(
+                    f"CustomResponse.ResponseBody must be a string, got {type(body).__name__}"
+                ),
+                phase=phase,
+                ref=ref,
+                field="Action.Block.CustomResponse.ResponseBody",
+            )
+        )
+    elif body is not None:
+        byte_len = len(body.encode("utf-8"))
         if byte_len > _MAX_CUSTOM_RESPONSE_BODY_BYTES:
             results.append(
                 _result(
