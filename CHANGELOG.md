@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Minimum `octorules` dependency: `>=0.35.0` (for `iter_audit_rules`).
+
 ### Added
 - **WA359** (ERROR): a `CustomResponse.ResponseBody` that is not a string.
   WA354 measured the value's text form, so a mistyped body passed linting
