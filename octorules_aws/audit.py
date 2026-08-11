@@ -1,8 +1,7 @@
 """AWS WAF audit extension — extracts IP ranges from IPSetReferenceStatement rules."""
 
-from octorules.audit import RuleIPInfo
+from octorules.audit import RuleIPInfo, iter_audit_rules
 from octorules.extensions import register_audit_extension
-from octorules.phases import PHASE_BY_NAME
 
 from octorules_aws import AWS_PHASE_NAMES
 from octorules_aws._statement_util import IPSET_ARN_RE as _IPSET_ARN_RE
@@ -16,19 +15,9 @@ def _extract_ips(rules_data: dict, phase_name: str) -> list[RuleIPInfo]:
     The core audit resolver expands these to actual IPs from the
     ``lists`` section.
     """
-    if phase_name not in AWS_PHASE_NAMES:
-        return []
-    if phase_name not in PHASE_BY_NAME:
-        return []
-
-    rules = rules_data.get(phase_name)
-    if not isinstance(rules, list):
-        return []
 
     results: list[RuleIPInfo] = []
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
+    for rule in iter_audit_rules(rules_data, phase_name, AWS_PHASE_NAMES):
         ref = str(rule.get("ref", ""))
         action_dict = rule.get("Action", {})
         action = ""
