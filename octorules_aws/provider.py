@@ -953,9 +953,7 @@ class AwsWafProvider:
         return result
 
     @_wrap_provider_errors
-    def poll_bulk_operation(
-        self, scope: Scope, operation_id: str, *, timeout: float = 120.0
-    ) -> str:
+    def poll_bulk_operation(self, scope: Scope, operation_id: str) -> str:
         """AWS WAF operations are synchronous — always returns 'completed'."""
         return "completed"
 
