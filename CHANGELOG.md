@@ -5,15 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Changed
-- Minimum `octorules` dependency: `>=0.35.0` (for `iter_audit_rules`).
+## [0.14.0] - 2026-08-16
 
 ### Added
 - **WA359** (ERROR): a `CustomResponse.ResponseBody` that is not a string.
   WA354 measured the value's text form, so a mistyped body passed linting
   and was rejected by the API instead.
+
+### Changed
+- Minimum `octorules` dependency: `>=0.35.0` (for `iter_audit_rules`).
 
 ## [0.13.0] - 2026-08-10
 
